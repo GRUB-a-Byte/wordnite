@@ -1,0 +1,78 @@
+# Words that must never be chosen as a SECRET answer (projector safety, SRS §8.7 "curate manually").
+# They remain valid guesses if SCOWL lists them. One word per line, lower-case. Lines starting with # are comments.
+# Slurs / sexual / crude
+bitch
+whore
+pussy
+penis
+horny
+sperm
+prick
+semen
+booty
+butts
+balls
+fagot
+kinky
+nudes
+queer
+screw
+sexed
+sexes
+sluts
+spunk
+tramp
+thong
+erect
+cocks
+cocky
+grope
+groin
+lusty
+bimbo
+hussy
+dildo
+porno
+skank
+boobs
+titty
+wanky
+negro
+honky
+spick
+gypsy
+gipsy
+homos
+lesbo
+retard
+# Violence / trauma
+raped
+rapes
+slave
+slurs
+lynch
+abort
+fetus
+slain
+kills
+# Bodily / drugs
+feces
+urine
+bowel
+opium
+cokes
+vomit
+# Insults (could feel targeted on a projector)
+idiot
+moron
+dummy
+loser
+bigot
+# Quality: irregular plurals / slang that make poor secret words
+oases
+pends
+gonna
+gimme
+corps
+wanna
+gotta

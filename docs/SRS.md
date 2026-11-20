@@ -765,3 +765,79 @@ These were not explicitly decided during requirements gathering. They are chosen
 | A-6 | Extra joiners become spectators, and a `?watch=1` projector view exists. | Reject extra joiners. |
 | A-7 | Pre-solve steal rows count toward `solvedInRows`. | Count only own-board rows. |
 | A-8 | Overtime rows are added on top of remaining rows (e.g. 2 left → 5 left). | Reset to exactly 3 rows. |
+
+---
+
+## Implementation addendum (v1.0 build, 2026-11-21)
+
+> This section was **added during implementation**. Everything above it is the original approved SRS,
+> left unchanged. Where an item below conflicts with the text above, **this addendum takes precedence**.
+> Each change traces to the implementation directive's amendments (FIX 1–8) or to a fact found while
+> building. Architecture details: [ARCHITECTURE.md](ARCHITECTURE.md). Deferred ideas:
+> [FUTURE_FEATURES.md](FUTURE_FEATURES.md).
+
+### Z.1 Requirement changes
+
+| SRS item | Change | Why |
+|---|---|---|
+| NFR-14, §9 `Player.secret` in broadcast state, §10.5 | Secrets are **never** in normal broadcasts. There are separate `PrivateGameState` (host only) and `PublicGameState` types, joined by a whitelist projection `toPublicState()`. Secrets are revealed only in `FINISHED` (`revealedSecrets`). A dev/debug tripwire blocks any snapshot containing an active secret. | FIX 1 |
+| FR-7.2 spectator "dramatic irony" toggle | **Dropped.** | It requires secrets in the broadcast (FIX 1). |
+| §9 `GameSettings` literal types | Plain `number` / `boolean` fields, `DEFAULT_SETTINGS`, `validateSettings()`. Adds `enableUnbeatableEarlyFinish` (default `true`). In 1.0, `maxPlayers` is validated to 2 and `wordLength` to 5. | FIX 3 |
+| GR-28 | Behind `enableUnbeatableEarlyFinish`. The host toggles it in the lobby or with `?early=0`. GR-28 is evaluated **after** GR-25, so a player who simply runs out of rows is reported as "Out of rows", never as "unbeatable". The end screen states that an unbeatable loss is not an elimination. | FIX 5 |
+| E-9 (late action processed before the timeout TICK) | **Superseded.** Every action first applies all due deadlines (countdown, match, overtime, forfeits) in chronological order. A late action lands after the timeout. | FIX 6 |
+| §5 ordering principle | Adds per-player `clientSeq` replay protection (`duplicate_seq`), idempotent elimination and finish, and validate-before-mutate. | FIX 6 |
+| NFR-1 | Split in two. (a) **Network:** submit → authoritative-confirmation latency is measured per action (p50/p95/max in the `?debug=1` panel). The pending row shows instantly, and further submits are blocked while pending. (b) **Animation:** flips and overlays are client-only and never block the engine or input. | FIX 4 |
+| GR-36 | Enforced on **both** sides. Guests show "Host left" after 10 s without host Presence. The host abandons if its own connection is down for more than 10 s, or if it restores with a heartbeat older than 10 s. | FIX 7 |
+| §8.7 word lists ("SCOWL ≤ 70 → ~10–13k") | SCOWL ≤ 70 yields only ~6.5k five-letter words, so the valid list uses SCOWL **≤ 80**, giving **11,193** words. The answer list uses SCOWL ≤ 35, minus plurals, `-s`/`-ed` inflections and a curated blocklist, giving **2,014** words. | Fact found while building |
+| §8.5 "latest stable" TypeScript | **TypeScript 6.0.3** (not 7.x) and **ESLint 9**. | TS 7 is the native port, and Next's build-time type-check relies on the JS compiler API. `eslint-plugin-react` 7 is not ESLint 10-ready. |
+
+### Z.2 Data-model changes (vs §9)
+
+- `PrivatePlayer extends PublicPlayer { secret }` and `PrivateGameState { rowCounter, eventCounter }` are
+  referee-only. `PublicGameState` adds `hostNow` and `revealedSecrets?`.
+- `PublicPlayer` adds:
+  - `lastSeq`: the ack for the client's last processed action;
+  - `solveOrder`: the final FIFO tie-break for same-millisecond solves.
+- `Row` adds `hit`, which is true on the solving or stealing row.
+- `spectators` entries carry `connected`, `wantsToPlay` and `joinedAt`.
+- `GameResult` adds `loserId`. `OutcomeReason` adds `all_eliminated` (GR-29).
+- `GameEvent`s carry an `id` (synchronized animations). New events: `MATCH_STARTED`, `PLAY_STARTED`.
+  `OVERTIME_START` carries `extraRows`.
+- `ClientAction` adds `RETURN_TO_LOBBY` and `UPDATE_SETTINGS` (both host only).
+- `EngineAction` adds `ABANDON`. `PRESENCE_JOIN` carries `nickname` and `role`.
+- `RejectReason` adds `duplicate_seq`, `invalid_target`, `no_rows`, `not_a_player`, `not_enough_players`
+  and `invalid_settings`.
+- The match records `playStartedAt` and `finishedAt`, so match duration is observable (FIX 5).
+
+### Z.3 Interpretations of ambiguous requirements
+
+- **FR-3.5 key colours** use *every public row scored against the current target's word*. In own mode
+  that includes the opponent's steal rows aimed at you, which GR-6 already makes visible.
+- **GR-13 duplicates** are per (player, target): the same word may be tried once as an own guess and once
+  as a steal.
+- **E-13:** clicking a shielded or eliminated opponent board does nothing. The board is desaturated and
+  shows a shield, and the reason appears next to the mode buttons.
+- **Rejected client-side words** stay in the draft so they can be edited, as in classic play.
+- **Host's own actions** go through the relay (`broadcast.self = true`) like guests' actions, so FIFO
+  ordering does not favour the host.
+
+### Z.4 Small additions beyond the SRS (demo support)
+
+- Host **"Back to lobby"** from the end or abandoned screen (`RETURN_TO_LOBBY`). It drops disconnected
+  players and promotes waiting would-be players, so a new audience challenger can play in the same room
+  with the same QR code.
+- **Dev/test-only local WebSocket relay** (`scripts/relay.mjs`, `npm run dev:local`). It allows local and
+  LAN play, and the full Playwright suite, without Supabase credentials. It is never deployed.
+- **Periodic snapshot re-broadcast** every 3 s during a match (Broadcast is at-most-once), plus pending
+  action resend with the same `clientSeq`.
+
+### Z.5 Not implemented / not verified
+
+- **UI-11** sound effects ("could") are not implemented.
+- **Supabase Realtime** has not been exercised: no credentials were available during the build. All
+  automated multiplayer tests ran through the local relay, which mimics Broadcast and Presence. A
+  two-device match on the deployed URL is still required (§11.3).
+- **NFR-4:** the room route's initial JS measured **205.5 KB gzipped**, against a 200 KB SHOULD. It
+  excludes the lazy chunks: supabase-js, word lists, referee code, QR encoder and Motion features.
+- **NFR-1 / 3 / 5 / 9 and AC-1…AC-4** have not been measured on real devices or networks. Local-relay ack
+  latency was ~16–30 ms on localhost, which says nothing about venue Wi-Fi.

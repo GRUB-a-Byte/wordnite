@@ -1,0 +1,46 @@
+{
+  "name": "word-royale",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Word Royale — a real-time head-to-head five-letter word battle.",
+  "scripts": {
+    "dev": "next dev",
+    "dev:local": "node scripts/dev-local.mjs",
+    "relay": "node scripts/relay.mjs",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "words:build": "node scripts/build-words.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.2",
+    "canvas-confetti": "1.9.4",
+    "motion": "14.14.0",
+    "next": "16.4.6",
+    "qrcode.react": "4.2.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zustand": "5.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@tailwindcss/postcss": "4.3.5",
+    "@types/canvas-confetti": "1.9.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.6",
+    "prettier": "3.10.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "6.0.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.1",
+    "ws": "8.23.0"
+  }
+}
