@@ -2,16 +2,13 @@
 
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { isBattleRoyale } from '@/lib/engine/state';
-import { findPlayer } from '@/lib/client/players';
 import { myPlayer, targetOf, useRoom } from '@/lib/client/store';
 import type { RoomClient } from '@/lib/client/roomClient';
-import { ArenaBar } from './ArenaBar';
 import { Board, type ActiveRow } from './Board';
 import { DebugPanel } from './DebugPanel';
-import { fitVars } from './fit';
+import { fitStyle } from './fit';
 import { Keyboard } from './Keyboard';
-import { CountdownOverlay, OvertimeGod, StatusLine } from './Overlays';
+import { Banners, CountdownOverlay, OvertimeGod } from './Overlays';
 import { RoomHeader } from './RoomHeader';
 import { useRoomClient } from './RoomContext';
 import { Timer } from './Timer';
@@ -37,8 +34,6 @@ function usePhysicalKeyboard(client: RoomClient) {
         client.toggleMode();
       } else if (/^[a-zA-Z]$/.test(e.key)) {
         client.typeLetter(e.key);
-      } else if (/^[1-9]$/.test(e.key)) {
-        client.chooseTargetIndex(Number(e.key) - 1); // battle royale: pick from your shortlist
       }
     };
     window.addEventListener('keydown', onKey);
@@ -52,7 +47,7 @@ function useOpponentDraft(playerId: string | undefined): ActiveRow | null {
       if (!playerId || !s.game) return null;
       const d = s.drafts[playerId];
       if (!d || d.matchNumber !== s.game.matchNumber || !d.letters) return null;
-      const target = findPlayer(s.game.players, d.targetId);
+      const target = s.game.players.find((p) => p.id === d.targetId);
       return {
         letters: d.letters,
         look: 'ghost' as const,
@@ -87,74 +82,76 @@ export function GameView() {
     ? { letters: pending.word, look: 'pending', steal: pending.kind === 'steal', label }
     : { letters: draft, look: 'typed', steal: attacking, label: attacking ? label : undefined, shakeKey: shake };
 
-  // One contextual hint (replaces the old per-board footers, so both boards stay identical).
-  let hint: React.ReactNode = null;
-  const royale = isBattleRoyale(game.players.length);
-  if (me.status === 'eliminated') hint = royale ? 'You’re out — watching the rest of the battle' : 'You’re out — watch the finish';
-  else if (royale && !target) hint = 'No targets left — survive!';
-  else if (me.status === 'invulnerable' && me.postSolveStealRows === 0) hint = 'Out of ammo — you’re shielded, sit tight';
-  else if (target?.status === 'invulnerable') hint = `🛡 ${target.nickname} is shielded — keep solving your own word`;
-  else if (stealBlocked && attacking) hint = stealBlocked;
-  else if (attacking && target) hint = `⚔ Steal mode — type ${target.nickname}’s word · Esc to go back`;
-  else if (royale && (me.targetOptions?.length ?? 0) > 1) hint = `Guess your word · pick a target above (keys 1–${me.targetOptions?.length}) to steal`;
-  else if (target && !stealBlocked) hint = `Guess your word · tap ${target.nickname}’s board (or Tab) to steal`;
+  let oppFooter: React.ReactNode = null;
+  if (target) {
+    if (target.status === 'invulnerable') oppFooter = '🛡 Shielded — can’t be stolen';
+    else if (target.status === 'eliminated') oppFooter = 'Eliminated';
+    else if (attacking && !stealBlocked) oppFooter = <span className="font-bold text-steal">⚔ STEAL MODE — type their word</span>;
+    else if (!stealBlocked) oppFooter = '(tap to ⚔ STEAL)';
+    else oppFooter = stealBlocked;
+  }
+
+  let myFooter: React.ReactNode = null;
+  if (me.status === 'eliminated') myFooter = 'You’re out — watch the finish';
+  else if (me.status === 'invulnerable' && me.postSolveStealRows === 0) myFooter = 'Out of ammo — sit tight, you’re shielded';
+  else if (attacking && me.status === 'alive') myFooter = <button type="button" className="underline" onClick={() => client.setMode('own')}>← Back to my board (Esc)</button>;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="flex min-h-dvh flex-col">
       <RoomHeader
         center={
-          <div className="only-compact">
+          <div className="md:hidden">
             <Timer size="sm" />
           </div>
         }
       />
-      <ArenaBar />
-      <main className="game-main flex min-h-0 flex-1 flex-col">
-        <div className="fit-area flex-1 px-1.5 sm:px-3">
-          <div className="fit-row" data-kind="player" style={fitVars(game)}>
-            <Board
-              player={me}
-              game={game}
-              viewer="me"
-              active={myActive}
-              onActivate={me.status === 'alive' ? () => client.setMode('own') : undefined}
-            />
-            <div className="only-wide center-col flex-col items-center gap-3 self-center">
-              <Timer size="md" />
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-black tracking-widest whitespace-nowrap uppercase ${
-                  attacking ? 'bg-steal text-on-accent' : 'bg-correct text-on-accent'
-                }`}
-              >
-                {attacking ? '⚔ Stealing' : 'My word'}
-              </span>
-            </div>
-            {target ? (
-              <Board
-                key={target.id /* a new target gets a fresh board (and its own flip animations) */}
-                player={target}
-                game={game}
-                viewer="opponent"
-                active={oppDraft}
-                targeted={attacking && !stealBlocked}
-                attackable={!stealBlocked}
-                onActivate={() => {
-                  if (!stealBlocked) client.setMode('steal');
-                }}
-              />
-            ) : (
-              <div className="board-pad flex w-[calc(var(--tile-size)*6.24)] shrink-0 flex-col items-center justify-center self-stretch rounded-2xl border border-dashed border-line text-center text-[length:var(--bh-name)] font-bold text-muted">
-                No targets — survive!
-              </div>
-            )}
+      <main className="flex flex-1 flex-col items-center justify-between gap-3">
+        <div
+          className="flex w-full max-w-6xl items-start justify-center gap-1.5 px-1.5 sm:gap-4 sm:px-4 md:gap-8"
+          style={fitStyle(game, '--chrome')}
+        >
+          <Board
+            player={me}
+            game={game}
+            viewer="me"
+            variant="mine"
+            active={myActive}
+            onActivate={me.status === 'alive' ? () => client.setMode('own') : undefined}
+            footer={myFooter}
+          />
+          <div className="hidden flex-col items-center gap-4 pt-12 md:flex">
+            <Timer size="md" />
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-black tracking-widest uppercase ${
+                attacking ? 'bg-steal/20 text-steal' : 'bg-correct/15 text-correct'
+              }`}
+            >
+              {attacking ? '⚔ Stealing' : 'My word'}
+            </span>
+            <span className="max-w-[9rem] text-center text-[11px] text-muted">Tab switches mode · Esc returns</span>
           </div>
+          {target && (
+            <Board
+              player={target}
+              game={game}
+              viewer="opponent"
+              variant="opp"
+              active={oppDraft}
+              targeted={attacking && !stealBlocked}
+              attackable={!stealBlocked}
+              onActivate={() => {
+                if (!stealBlocked) client.setMode('steal');
+              }}
+              footer={oppFooter}
+            />
+          )}
         </div>
-        <div className="game-dock safe-bottom relative flex shrink-0 flex-col items-center px-1.5 pt-1 sm:px-3">
-          <Toasts placement="dock" />
-          <StatusLine hint={hint} />
+        <div className="safe-bottom sticky bottom-0 flex w-full justify-center bg-gradient-to-t from-night via-night/95 to-transparent px-1.5 pt-3">
           <Keyboard />
         </div>
       </main>
+      <Banners />
+      <Toasts />
       <CountdownOverlay />
       <OvertimeGod />
       <DebugPanel />

@@ -22,23 +22,22 @@ function Frame({
 }) {
   return (
     <div className={`relative flex items-center ${className}`}>
-      {/* UI-6 steal row: red frame + ⚔ in the side margin + target label. The frame is an outline,
-          so it takes no layout space (the fit system counts rows as exactly one tile tall). */}
+      {/* UI-6 steal row: red frame + ⚔ in the margin + target label */}
       <span
         aria-hidden
-        className={`absolute -left-[1.15em] w-[1em] text-center text-[calc(var(--tile-size,var(--tile))*0.34)] ${steal ? 'text-steal-ink' : 'opacity-0'}`}
+        className={`absolute -left-[1.15em] w-[1em] text-center text-[calc(var(--tile-size,var(--tile))*0.36)] ${steal ? 'text-steal' : 'opacity-0'}`}
       >
         ⚔
       </span>
       <div
-        className={`tile-gap flex rounded-[calc(var(--tile-size,var(--tile))*0.14)] ${
-          steal ? 'outline-2 outline-offset-2 outline-steal-ink' : ''
-        } ${hit ? 'glow-correct' : ''}`}
+        className={`flex gap-[var(--tile-gap)] rounded-[calc(var(--tile-size,var(--tile))*0.16)] p-[2px] ${
+          steal ? 'outline-2 outline-offset-1 outline-steal' : ''
+        } ${hit ? 'shadow-[0_0_18px_rgb(20_184_166/0.6)]' : ''}`}
       >
         {children}
       </div>
       {label && (
-        <span className="steal-label pointer-events-none absolute -top-2 -right-1 z-10 max-w-[70%] truncate rounded bg-steal px-1 py-px text-[9px] leading-none font-bold whitespace-nowrap text-on-accent sm:text-[10px]">
+        <span className="pointer-events-none absolute -top-2 -right-1 z-10 max-w-[70%] truncate rounded bg-steal px-1 py-px text-[9px] leading-none font-bold whitespace-nowrap text-white sm:text-[10px]">
           {label}
         </span>
       )}

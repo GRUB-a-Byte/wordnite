@@ -19,7 +19,7 @@ Goal: many players start in 1v1 duels, and the competition narrows until a final
 | Automatic pairings | Random seeding for round 1, then by bracket position. Byes for odd counts. | `lib/engine/pairing.ts` |
 | Final 1v1 | The last two players play a standard duel on the projector. | Existing duel and spectator view |
 | Simultaneous duels | Several duels in one room. The projector shows a bracket and highlights the closest match. | Per-duel state inside one room, or one channel per duel |
-| ~~Free-for-all variant (SRS §13)~~ | **Implemented** (2–100 players, per-player 3-option attack shortlists, placings). See ARCHITECTURE §10. | — |
+| Free-for-all variant (SRS §13) | Each player sees exactly two boards (their own and a randomly assigned target). Targets are reassigned when theirs is eliminated or shielded. A steal eliminates but doesn't end the game. Ranking: shielded by rows then time, then alive, then reverse elimination order. | `pairing.ts` (random target), `outcome.ts` (generalised GR-28 and ranking), the `maxPlayers` limit |
 | Matchmaking | A public quick-play queue | Needs a server |
 
 Open questions to settle before building:

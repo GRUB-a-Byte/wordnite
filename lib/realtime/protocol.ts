@@ -1,5 +1,4 @@
-import type { ClientAction, GameSettings, PresenceRole, Rejection } from '@/lib/engine/types';
-import type { WireDelta, WireState } from './wire';
+import type { ClientAction, GameSettings, PresenceRole, PublicGameState, Rejection } from '@/lib/engine/types';
 
 /**
  * Wire protocol over the `room:{CODE}` channel (SRS §8.3, amended by FIX 1).
@@ -7,8 +6,7 @@ import type { WireDelta, WireState } from './wire';
  * | event          | direction      | payload                                   |
  * |----------------|----------------|-------------------------------------------|
  * | `action`       | client → host  | ClientAction                              |
- * | `state`        | host → all     | full WireState snapshot (no secrets)      |
- * | `state_delta`  | host → all     | WireDelta: only what changed (see wire.ts)|
+ * | `state`        | host → all     | PublicGameState (never contains secrets)  |
  * | `reject`       | host → all     | Rejection (clients filter by playerId)    |
  * | `draft`        | player → all   | DraftPayload (ephemeral, not refereed)    |
  * | `sync_request` | client → host  | { playerId }                              |
@@ -23,15 +21,14 @@ export interface DraftPayload {
 
 export interface EventPayloads {
   action: ClientAction;
-  state: WireState;
-  state_delta: WireDelta;
+  state: PublicGameState;
   reject: Rejection;
   draft: DraftPayload;
   sync_request: { playerId: string };
 }
 
 export type EventName = keyof EventPayloads;
-export const EVENT_NAMES: readonly EventName[] = ['action', 'state', 'state_delta', 'reject', 'draft', 'sync_request'];
+export const EVENT_NAMES: readonly EventName[] = ['action', 'state', 'reject', 'draft', 'sync_request'];
 
 export interface PresenceMeta {
   playerId: string;
@@ -63,7 +60,6 @@ const SETTINGS_KEYS: readonly (keyof GameSettings)[] = [
   'guestGraceMs',
   'hostGraceMs',
   'maxPlayers',
-  'targetChoices',
   'enableUnbeatableEarlyFinish',
 ];
 
@@ -77,8 +73,6 @@ export function parseClientAction(raw: unknown): ClientAction | null {
       return { type: raw.type, ...base };
     case 'GUESS':
       return isWord(raw.word) ? { type: 'GUESS', ...base, word: raw.word } : null;
-    case 'SET_TARGET':
-      return isId(raw.targetId) ? { type: 'SET_TARGET', ...base, targetId: raw.targetId } : null;
     case 'STEAL':
       return isWord(raw.word) && isId(raw.targetId)
         ? { type: 'STEAL', ...base, word: raw.word, targetId: raw.targetId }
@@ -120,7 +114,7 @@ export function parseDraft(raw: unknown): DraftPayload | null {
   };
 }
 
-export function looksLikeWireState(raw: unknown): raw is WireState {
+export function looksLikePublicState(raw: unknown): raw is PublicGameState {
   return (
     isObj(raw) &&
     typeof raw.version === 'number' &&

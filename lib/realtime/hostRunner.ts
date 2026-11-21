@@ -1,6 +1,6 @@
 import { findLeakedSecrets, toPublicState } from '@/lib/engine/project';
 import { reduce } from '@/lib/engine/reducer';
-import { createLobbyState, isActivePhase, isBattleRoyale } from '@/lib/engine/state';
+import { createLobbyState, isActivePhase } from '@/lib/engine/state';
 import type {
   EngineAction,
   GameSettings,
@@ -9,7 +9,6 @@ import type {
   WordDictionary,
 } from '@/lib/engine/types';
 import { parseClientAction, type PresenceMeta } from './protocol';
-import { encodeState, makeDelta, type WireState } from './wire';
 import type { RoomTransport, TransportStatus } from './transport';
 
 type KV = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -32,10 +31,6 @@ export interface HostRunnerOptions {
 }
 
 export const stateKey = (code: string) => `wr:state:${code}`;
-/** Big games: coalesce broadcasts into one per BATCH_MS (a duel always sends immediately). */
-const BATCH_MS = 100;
-/** Full snapshot at least this often (deltas in between; clients resync on any gap). */
-const FULL_EVERY_MS = 20_000;
 export const beatKey = (code: string) => `wr:hostbeat:${code}`;
 
 /**
@@ -58,10 +53,6 @@ export class HostRunner {
   private lastBroadcastAt = 0;
   private lastBeatAt = 0;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
-  private batchTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingFull = false;
-  private lastWire: WireState | null = null;
-  private lastFullAt = 0;
   readonly restored: boolean;
 
   constructor(opts: HostRunnerOptions) {
@@ -91,7 +82,7 @@ export class HostRunner {
         const action = parseClientAction(raw);
         if (action) this.dispatch(action);
       }),
-      t.on('sync_request', () => this.scheduleSync()),
+      t.on('sync_request', () => this.scheduleBroadcast()),
       t.onPresence((members) => this.onPresence(members)),
       t.onStatus((status) => this.onStatus(status)),
     );
@@ -105,13 +96,12 @@ export class HostRunner {
 
     this.tickTimer = setInterval(() => this.onTick(), this.o.tickMs ?? 250);
     this.beat();
-    this.publish({ full: true });
+    this.broadcast();
   }
 
   stop(): void {
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.syncTimer) clearTimeout(this.syncTimer);
-    if (this.batchTimer) clearTimeout(this.batchTimer);
     this.unsubs.forEach((u) => u());
     this.unsubs = [];
   }
@@ -133,9 +123,9 @@ export class HostRunner {
     if (res.changed) {
       this.state = res.state;
       this.persist();
-      this.publish({ full: resync });
+      this.broadcast();
     } else if (resync) {
-      this.publish({ full: true }); // the client may have missed updates — give it everything
+      this.broadcast();
     }
   }
 
@@ -147,16 +137,15 @@ export class HostRunner {
     }
     this.dispatch({ type: 'TICK' });
     if (now - this.lastBeatAt >= 1000) this.beat();
-    // Heartbeat: Broadcast is at-most-once, so every few seconds send a (tiny) delta. Clients that
-    // missed something notice the version gap and request a full snapshot; it also keeps their clock
-    // offsets fresh.
-    if (isActivePhase(this.state.phase) && now - this.lastBroadcastAt > 3000 && !this.batchTimer) this.flush();
+    // Safety net: Broadcast is at-most-once, so re-send the (full) snapshot every few seconds during
+    // a match. Also keeps clients' clock offsets fresh.
+    if (isActivePhase(this.state.phase) && now - this.lastBroadcastAt > 3000) this.broadcast();
   }
 
   private onStatus(status: TransportStatus): void {
     if (status === 'connected') {
       this.offlineSince = null;
-      this.publish({ full: true });
+      this.broadcast();
     } else if (status === 'reconnecting' && this.offlineSince === null) {
       this.offlineSince = this.now();
     }
@@ -184,36 +173,15 @@ export class HostRunner {
     }
   }
 
-  private scheduleSync(): void {
+  private scheduleBroadcast(): void {
     if (this.syncTimer) return; // coalesce bursts of sync_requests
     this.syncTimer = setTimeout(() => {
       this.syncTimer = null;
-      this.publish({ full: true });
+      this.broadcast();
     }, 50);
   }
 
-  /**
-   * After every change: the host's own UI updates immediately; the network broadcast goes out now
-   * for a duel, or batched (one per BATCH_MS) in a battle royale so 100 players guessing at once
-   * do not flood the channel.
-   */
-  private publish(opts: { full?: boolean } = {}): void {
-    if (opts.full) this.pendingFull = true;
-    if (!isBattleRoyale(this.state.players.length)) {
-      this.flush();
-      return;
-    }
-    this.o.onPublicState(toPublicState(this.state, this.now()));
-    if (!this.batchTimer) {
-      this.batchTimer = setTimeout(() => {
-        this.batchTimer = null;
-        this.flush({ localAlreadyApplied: true });
-      }, BATCH_MS);
-    }
-  }
-
-  /** Sends a full snapshot when needed, otherwise just what changed since the last broadcast. */
-  private flush(opts: { localAlreadyApplied?: boolean } = {}): void {
+  private broadcast(): void {
     const now = this.now();
     const pub = toPublicState(this.state, now);
     if (this.o.debug || process.env.NODE_ENV !== 'production') {
@@ -223,18 +191,9 @@ export class HostRunner {
         return;
       }
     }
-    const wire = encodeState(pub);
-    const full = this.pendingFull || !this.lastWire || now - this.lastFullAt > FULL_EVERY_MS;
-    if (full) {
-      this.o.transport.send('state', wire);
-      this.lastFullAt = now;
-      this.pendingFull = false;
-    } else {
-      this.o.transport.send('state_delta', makeDelta(this.lastWire as WireState, wire));
-    }
-    this.lastWire = wire;
     this.lastBroadcastAt = now;
-    if (!opts.localAlreadyApplied) this.o.onPublicState(pub);
+    this.o.transport.send('state', pub);
+    this.o.onPublicState(pub);
   }
 
   private persist(): void {

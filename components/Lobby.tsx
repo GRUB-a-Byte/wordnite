@@ -3,14 +3,11 @@
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { shareableRoomUrl } from '@/lib/client/shareUrl';
-import { isBattleRoyale, isWaitingForSeat } from '@/lib/engine/state';
 import { useRoom } from '@/lib/client/store';
 import { DebugPanel } from './DebugPanel';
 import { HowToPlay } from './HowToPlay';
 import { RoomHeader } from './RoomHeader';
 import { useRoomClient } from './RoomContext';
-import { useTemporaryFlag } from './hooks';
 import { Toasts } from './Toasts';
 
 // Only the lobby needs the QR encoder — keep it out of the shared room bundle (NFR-4).
@@ -19,89 +16,9 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   loading: () => <div className="h-[176px] w-[176px] animate-pulse rounded bg-line" />,
 });
 
-function useRoomUrl(code: string): { url: string; localOnly: boolean } {
+function useRoomUrl(code: string): string {
   // Rendered only after the client controller mounted, so window is available.
-  if (typeof window === 'undefined') return { url: `/room/${code}`, localOnly: false };
-  return shareableRoomUrl(window.location, code, process.env.NEXT_PUBLIC_LAN_HOST);
-}
-
-const CAP_PRESETS: [number, string][] = [
-  [2, 'Duel'],
-  [4, '4'],
-  [10, '10'],
-  [25, '25'],
-  [50, '50'],
-  [100, '100'],
-];
-
-/** Host-only: how many players this room admits (2 = duel … 100 = battle royale). */
-function PlayerCapControl({ cap, onChange }: { cap: number; onChange: (n: number) => void }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const commit = (raw: string) => {
-    setDraft(null);
-    const n = Math.round(Number(raw));
-    if (Number.isFinite(n)) onChange(Math.min(100, Math.max(2, n)));
-  };
-  const step = (d: number) => onChange(Math.min(100, Math.max(2, cap + d)));
-  return (
-    <div className="space-y-2 rounded-xl bg-panel-2 px-3 py-2.5 text-sm" data-testid="player-cap">
-      <div className="flex items-center justify-between gap-3">
-        <span>
-          <span className="font-bold">Max players</span>
-          <span className="block text-xs text-muted">2 = duel · up to 100 = battle royale. Extra people spectate.</span>
-        </span>
-        <span className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => step(-1)}
-            disabled={cap <= 2}
-            className="h-8 w-8 rounded-lg border border-line font-black disabled:opacity-40"
-            aria-label="Fewer players"
-          >
-            −
-          </button>
-          <input
-            type="number"
-            min={2}
-            max={100}
-            inputMode="numeric"
-            value={draft ?? String(cap)}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={(e) => commit(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
-            }}
-            className="h-8 w-14 rounded-lg border border-line bg-night text-center font-black outline-none focus:border-blue-ink"
-            aria-label="Maximum players"
-            data-testid="player-cap-input"
-          />
-          <button
-            type="button"
-            onClick={() => step(1)}
-            disabled={cap >= 100}
-            className="h-8 w-8 rounded-lg border border-line font-black disabled:opacity-40"
-            aria-label="More players"
-          >
-            +
-          </button>
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {CAP_PRESETS.map(([n, label]) => (
-          <button
-            key={n}
-            type="button"
-            onClick={() => onChange(n)}
-            aria-pressed={cap === n}
-            className="rounded-full border border-line px-2.5 py-0.5 text-xs font-bold text-muted transition hover:text-ink aria-pressed:border-blue aria-pressed:bg-blue aria-pressed:text-on-accent"
-            data-testid={`cap-${n}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+  return typeof window === 'undefined' ? `/room/${code}` : `${window.location.origin}/room/${code}`;
 }
 
 /** FR-2.1 … FR-2.5: code, QR, roster, host-only Start, how-to-play. */
@@ -116,26 +33,23 @@ export function Lobby() {
       connection: s.connection,
     })),
   );
-  const { url, localOnly } = useRoomUrl(roomCode);
-  const [copied, markCopied] = useTemporaryFlag(1500);
+  const url = useRoomUrl(roomCode);
+  const [copied, setCopied] = useState(false);
   const [bigQr, setBigQr] = useState(false);
-  const [starting, markStarting] = useTemporaryFlag(3000); // one START per click
+  const [starting, setStarting] = useState(false);
   if (!game) return null;
 
   const isHost = game.hostId === me;
   const players = game.players;
   const spectators = game.spectators.filter((s) => s.connected);
-  const cap = game.settings.maxPlayers;
-  const royale = isBattleRoyale(cap);
-  // Any number of players from 2 up to the cap can start — the room does not have to be full.
-  const ready = players.length >= 2 && players.every((p) => p.connected);
+  const ready = players.length === game.settings.maxPlayers && players.every((p) => p.connected);
   const amSpectator = !players.some((p) => p.id === me);
-  const meSpectating = game.spectators.find((s) => s.id === me);
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      markCopied();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       client.toast(url, 'info');
     }
@@ -158,15 +72,7 @@ export function Lobby() {
           >
             <QRCodeSVG value={url} size={176} marginSize={0} />
           </button>
-          <span className="text-sm text-muted" data-testid="share-url">
-            Scan to join · or open {url.replace(/^https?:\/\//, '')}
-          </span>
-          {localOnly && (
-            <p className="max-w-xs rounded-lg bg-shield px-3 py-2 text-xs font-bold text-on-accent" role="alert">
-              This link only works on this computer. To let others join, open the game using your network
-              address (shown in the terminal by <code>npm run dev:local</code>) or use the deployed site.
-            </p>
-          )}
+          <span className="text-sm text-muted">Scan to join · or open {url.replace(/^https?:\/\//, '')}</span>
           <button
             type="button"
             onClick={copy}
@@ -178,44 +84,33 @@ export function Lobby() {
 
         <section className="flex flex-col gap-4 rounded-2xl border border-line bg-panel/70 p-5">
           <div>
-            <h2 className="mb-2 flex items-baseline justify-between text-xs font-bold tracking-[0.3em] text-muted uppercase">
-              <span>
-                Players ({players.length}/{cap})
-              </span>
-              <span className="tracking-normal normal-case">{royale ? '⚔ Battle royale' : 'Duel'}</span>
+            <h2 className="mb-2 text-xs font-bold tracking-[0.3em] text-muted uppercase">
+              Players ({players.length}/{game.settings.maxPlayers})
             </h2>
-            <ul
-              className={`${players.length > 4 ? 'flex flex-wrap gap-1.5' : 'space-y-2'} max-h-64 overflow-y-auto pr-1`}
-              data-testid="player-list"
-            >
+            <ul className="space-y-2" data-testid="player-list">
               {players.map((p) => (
-                <li
-                  key={p.id}
-                  className={`flex items-center gap-2 bg-panel-2 ${players.length > 4 ? 'rounded-full px-2.5 py-1 text-sm' : 'rounded-xl px-3 py-2'}`}
-                >
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${p.connected ? 'bg-correct' : 'bg-steal'}`} />
-                  <span className="max-w-[10rem] truncate font-bold">{p.nickname}</span>
-                  {p.isHost && <span className="rounded bg-shield px-1.5 text-xs font-bold text-on-accent">★ host</span>}
+                <li key={p.id} className="flex items-center gap-2 rounded-xl bg-panel-2 px-3 py-2">
+                  <span className={`h-2.5 w-2.5 rounded-full ${p.connected ? 'bg-correct' : 'bg-steal'}`} />
+                  <span className="font-bold">{p.nickname}</span>
+                  {p.isHost && <span className="rounded bg-shield/20 px-1.5 text-xs font-bold text-shield">★ host</span>}
                   {p.id === me && <span className="text-xs text-muted">(you)</span>}
                 </li>
               ))}
-              {players.length < cap && players.length <= 4 && (
+              {players.length < game.settings.maxPlayers && (
                 <li className="rounded-xl border border-dashed border-line px-3 py-2 text-sm text-muted">
-                  {royale ? `Room for ${cap - players.length} more…` : 'Waiting for a challenger…'}
+                  Waiting for a challenger…
                 </li>
               )}
             </ul>
             {spectators.length > 0 && (
               <p className="mt-2 text-sm text-muted" data-testid="spectator-count">
                 Spectators: {spectators.length}
-                {spectators.some(isWaitingForSeat) && ` · ${spectators.filter(isWaitingForSeat).length} waiting for a seat`}
               </p>
             )}
           </div>
 
           {isHost ? (
             <div className="space-y-3">
-              <PlayerCapControl cap={cap} onChange={(n) => client.updateSettings({ maxPlayers: n })} />
               <label className="flex items-center justify-between gap-3 rounded-xl bg-panel-2 px-3 py-2 text-sm">
                 <span>
                   <span className="font-bold">Unbeatable early finish</span>
@@ -229,37 +124,24 @@ export function Lobby() {
                   data-testid="toggle-early-finish"
                 />
               </label>
-              {royale && game.settings.enableUnbeatableEarlyFinish && (
-                <p className="rounded-lg bg-shield/40 px-3 py-2 text-xs text-ink">
-                  Tip: in a big game one lucky early solve can end the match for everyone. Turn early finish off to let
-                  the battle royale play out.
-                </p>
-              )}
               <button
                 type="button"
                 onClick={() => {
-                  markStarting(); // the lobby unmounts when the countdown begins
+                  setStarting(true); // one START per click; the lobby unmounts when the countdown begins
                   client.start();
+                  setTimeout(() => setStarting(false), 3000);
                 }}
                 disabled={starting || !ready || !dictionaryReady || connection !== 'connected'}
-                className="w-full rounded-xl bg-gradient-to-r from-correct to-royal-2 px-4 py-4 text-xl font-black tracking-wide text-on-accent shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                className="w-full rounded-xl bg-gradient-to-r from-correct to-royal-2 px-4 py-4 text-xl font-black tracking-wide text-night shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                 data-testid="start-game"
               >
                 START GAME
               </button>
-              <p className="text-center text-sm text-muted" data-testid="start-hint">
-                {ready
-                  ? `${players.length} player${players.length === 1 ? '' : 's'} ready${players.length < cap ? ` — you can start now or wait for up to ${cap}` : ''}`
-                  : 'Need at least 2 players to start.'}
-              </p>
+              {!ready && <p className="text-center text-sm text-muted">Need exactly 2 connected players.</p>}
             </div>
           ) : (
             <p className="rounded-xl bg-panel-2 px-4 py-3 text-center font-bold text-muted" data-testid="waiting-host">
-              {!amSpectator
-                ? 'Waiting for the host to start…'
-                : meSpectating?.wantsToPlay
-                  ? 'The room is full — you’re in line for the next free seat.'
-                  : 'You’re spectating.'}
+              {amSpectator ? 'You’re spectating this match.' : 'Waiting for the host to start…'}
             </p>
           )}
 

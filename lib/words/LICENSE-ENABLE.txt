@@ -1,9 +1,0 @@
-ENABLE (Enhanced North American Benchmark LExicon) word list — enable1.txt
-
-ENABLE was compiled by Alan Beale and M. Cooper (and contributors) and was explicitly placed in
-the PUBLIC DOMAIN. It may be used, copied and redistributed for any purpose without restriction.
-
-Source used for lib/words/valid.ts: enable1.txt (172,823 words), as mirrored at
-https://github.com/dolph/dictionary — only its 5-letter a–z entries are included, merged with
-SCOWL (see LICENSE-SCOWL.txt). It contributes words to the valid-GUESS list only; secret answers
-come from SCOWL's common-word sizes.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { GameEvent } from '@/lib/engine/types';
 import { useRoom, type FxEntry } from '@/lib/client/store';
@@ -18,44 +18,6 @@ export function useNow(intervalMs = 200): number {
     };
   }, [intervalMs]);
   return now;
-}
-
-/**
- * A flag that turns on when `trigger()` is called and back off after `ms` — for one-shot button
- * guards ("don't send START twice") and short confirmations ("Copied!"). The timer is cleared on
- * unmount.
- */
-export function useTemporaryFlag(ms: number): [boolean, () => void] {
-  const [on, setOn] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
-  const trigger = useCallback(() => {
-    setOn(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setOn(false), ms);
-  }, [ms]);
-  return [on, trigger];
-}
-
-/** Content-box size of an element, kept up to date with a ResizeObserver. */
-export function useElementSize<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      if (entry) setSize({ w: entry.contentRect.width, h: entry.contentRect.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, size] as const;
 }
 
 /** Milliseconds left in the current phase on the HOST clock (FR-5.1, §8.3 clock sync). */

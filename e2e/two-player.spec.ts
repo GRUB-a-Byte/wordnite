@@ -1,9 +1,9 @@
-import { expect, test, type Page } from '@playwright/test';
-import { createRoom, hostRoster, joinRoom, newPlayer, typeWord, waitForPlay } from './helpers';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 
 /**
  * SRS §12.2 — two browser contexts (host A, guest B) plus a spectator (C).
- * Rooms use the `?debug=1&seed=42` test hooks (see ./helpers).
+ * Uses the `?debug=1&seed=42` test hooks: deterministic secrets and `window.__WR_HOST__` on the
+ * HOST only (the host is the referee and holds the secrets anyway — see ARCHITECTURE.md).
  */
 
 const CANDIDATES = ['CRANE', 'SLATE', 'TRAIN', 'GHOST', 'PLUMB', 'MOUND', 'STEAK', 'CHAIR', 'LEMON', 'OCEAN'];
@@ -15,11 +15,34 @@ interface Secrets {
   guestSecret: string;
 }
 
+async function newPlayer(browser: Browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  return { context, page };
+}
+
+/** The match timer only renders in PLAYING / OVERTIME, so this waits out the 3-2-1 countdown. */
+async function waitForPlay(...pages: Page[]) {
+  for (const page of pages) {
+    await expect(page.getByTestId('keyboard').or(page.getByText('Spectating'))).toBeVisible();
+    await expect(page.getByTestId('timer').filter({ visible: true }).first()).toBeVisible({ timeout: 10_000 });
+  }
+}
+
+async function typeWord(page: Page, word: string) {
+  await page.keyboard.type(word.toLowerCase(), { delay: 15 });
+  await page.keyboard.press('Enter');
+}
+
 async function readSecrets(host: Page): Promise<Secrets> {
-  const { hostId, players } = await hostRoster(host);
-  const hostP = players.find((p) => p.id === hostId)!;
-  const guestP = players.find((p) => p.id !== hostId)!;
-  return { hostId: hostP.id, guestId: guestP.id, hostSecret: hostP.secret, guestSecret: guestP.secret };
+  return host.evaluate(() => {
+    const h = (window as unknown as { __WR_HOST__: { privateState: { hostId: string; players: { id: string; secret: string }[] } } })
+      .__WR_HOST__;
+    const s = h.privateState;
+    const hostP = s.players.find((p) => p.id === s.hostId)!;
+    const guestP = s.players.find((p) => p.id !== s.hostId)!;
+    return { hostId: hostP.id, guestId: guestP.id, hostSecret: hostP.secret, guestSecret: guestP.secret };
+  });
 }
 
 /** Text labels of the tiles of the n-th scored row on a board, e.g. ["C, correct", …]. */
@@ -29,8 +52,20 @@ async function rowLabels(page: Page, boardId: string, rowIndex: number): Promise
   return all.slice(rowIndex * 5, rowIndex * 5 + 5);
 }
 
+async function createRoom(host: Page): Promise<string> {
+  await host.goto('/?debug=1&seed=42');
+  await host.getByTestId('nickname-input').fill('alice');
+  await host.getByTestId('create-room').click();
+  await host.waitForURL(/\/room\/[A-Z]{4}/);
+  const code = (await host.getByTestId('room-code').textContent())!.trim();
+  expect(code).toMatch(/^[A-Z]{4}$/);
+  return code;
+}
+
 async function joinAsGuest(guest: Page, code: string, nickname = 'bob') {
-  await joinRoom(guest, code, nickname);
+  await guest.goto(`/room/${code}`);
+  await guest.getByTestId('gate-nickname').fill(nickname);
+  await guest.getByTestId('gate-join').click();
   await expect(guest.getByTestId('waiting-host')).toBeVisible();
 }
 

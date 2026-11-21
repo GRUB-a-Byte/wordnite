@@ -1,17 +1,9 @@
-import { evaluateOutcome, rankPlayers, timeoutOutcome } from './outcome';
-import { assignTargets, isAssignedTarget } from './pairing';
+import { evaluateOutcome, timeoutOutcome } from './outcome';
+import { applyPairing, isAssignedTarget } from './pairing';
 import { scoreGuess } from './score';
 import { pickSecrets } from './secrets';
 import { InvalidSettingsError, resolveSettings } from './settings';
-import {
-  isActivePhase,
-  isPlayPhase,
-  isWaitingForSeat,
-  newPlayer,
-  nextMatchSize,
-  playersStillHere,
-  resetPlayerForMatch,
-} from './state';
+import { isActivePhase, isPlayPhase, newPlayer, resetPlayerForMatch } from './state';
 import type {
   ClientAction,
   EliminationReason,
@@ -132,26 +124,11 @@ function eliminate(tx: Tx, p: PrivatePlayer, reason: EliminationReason, at: numb
 function finish(tx: Tx, result: GameResult, at: number): void {
   if (!isActivePhase(tx.s.phase)) return;
   tx.s.phase = 'FINISHED';
-  tx.s.result = {
-    ...result,
-    standings: rankPlayers(tx.s.players).map((pl, i) => ({ playerId: pl.id, place: i + 1 })),
-  };
+  tx.s.result = result;
   tx.s.finishedAt = at;
   delete tx.s.phaseEndsAt;
   tx.changed = true;
-  emit(tx, { type: 'FINISHED', result: tx.s.result });
-}
-
-/**
- * Battle royale: after any status change, players whose target was stolen / ran out / solved get a
- * new random target (pairing.ts). Not run once the match is over (targets freeze for the end screen).
- */
-function retarget(tx: Tx): void {
-  if (!isActivePhase(tx.s.phase)) return;
-  for (const id of assignTargets(tx.s.players, tx.ctx.rng, tx.s.settings.targetChoices)) {
-    const pl = findPlayer(tx, id);
-    emit(tx, { type: 'TARGET_CHANGED', playerId: id, targetId: pl?.targetId });
-  }
+  emit(tx, { type: 'FINISHED', result });
 }
 
 /**
@@ -203,7 +180,6 @@ function advanceClock(tx: Tx, now: number): void {
       if (p) {
         eliminate(tx, p, 'forfeit', due.at); // GR-35 (applies to every status, SRS §4.2)
         resolveOutcome(tx, due.at);
-        retarget(tx);
       }
       continue;
     }
@@ -302,20 +278,10 @@ function handleLeave(tx: Tx, playerId: string): void {
 }
 
 /** Fills free player seats in the lobby with connected spectators who wanted to play (join order). */
-/** Connected spectators who want to play, first come first served (projector "?watch=1" viewers never do). */
-function waitingSpectators(s: PrivateGameState) {
-  return s.spectators.filter(isWaitingForSeat).sort((a, b) => a.joinedAt - b.joinedAt);
-}
-
-/**
- * Moves waiting spectators into free player seats (up to maxPlayers). Runs in the lobby, and when
- * the host starts the next match from the end screen — people who arrived mid-match watch that
- * match and play the next one.
- */
-function promoteSpectators(tx: Tx, betweenMatches = false): void {
+function promoteSpectators(tx: Tx): void {
   const s = tx.s;
-  if (s.phase !== 'LOBBY' && !betweenMatches) return;
-  const queue = waitingSpectators(s);
+  if (s.phase !== 'LOBBY') return;
+  const queue = s.spectators.filter((sp) => sp.wantsToPlay && sp.connected).sort((a, b) => a.joinedAt - b.joinedAt);
   for (const sp of queue) {
     if (s.players.length >= s.settings.maxPlayers) break;
     s.players.push(newPlayer(sp.id, sp.nickname, false, s.settings));
@@ -365,8 +331,6 @@ function handleClientAction(tx: Tx, action: ClientAction): void {
       return handleRematch(tx, action, actor);
     case 'RETURN_TO_LOBBY':
       return handleReturnToLobby(tx, action, actor);
-    case 'SET_TARGET':
-      return handleSetTarget(tx, action, actor);
     case 'UPDATE_SETTINGS':
       return handleUpdateSettings(tx, action, actor);
   }
@@ -404,7 +368,6 @@ function handleGuess(tx: Tx, action: Extract<ClientAction, { type: 'GUESS' }>, p
     emit(tx, { type: 'SOLVED', playerId: p.id, rows: p.rowsUsed });
   }
   resolveOutcome(tx, ctx.now);
-  retarget(tx);
 }
 
 function handleSteal(tx: Tx, action: Extract<ClientAction, { type: 'STEAL' }>, p: PrivatePlayer): void {
@@ -412,10 +375,9 @@ function handleSteal(tx: Tx, action: Extract<ClientAction, { type: 'STEAL' }>, p
   if (!isPlayPhase(s.phase)) return reject(tx, action, 'not_playing'); // GR-14
   if (p.status === 'eliminated') return reject(tx, action, 'eliminated'); // GR-14
   const target = findPlayer(tx, action.targetId);
-  if (!target || target.id === p.id) return reject(tx, action, 'invalid_target');
+  if (!target || !isAssignedTarget(s.players, p.id, target.id)) return reject(tx, action, 'invalid_target');
   if (target.status === 'invulnerable') return reject(tx, action, 'target_shielded'); // GR-20, E-2
   if (target.status === 'eliminated') return reject(tx, action, 'target_eliminated'); // GR-20
-  if (!isAssignedTarget(s.players, p.id, target.id)) return reject(tx, action, 'invalid_target'); // not on your shortlist
   const word = normalizeWord(action.word);
   if (!isWellFormed(word, s.settings.wordLength) || !ctx.dictionary.isValid(word)) {
     return reject(tx, action, 'invalid_word');
@@ -445,18 +407,6 @@ function handleSteal(tx: Tx, action: Extract<ClientAction, { type: 'STEAL' }>, p
     emit(tx, { type: 'STEAL_MISS', stealerId: p.id, targetId: target.id, rowId: row.id });
   }
   resolveOutcome(tx, ctx.now);
-  retarget(tx);
-}
-
-/** Battle royale: choose whom to attack from your own shortlist. */
-function handleSetTarget(tx: Tx, action: Extract<ClientAction, { type: 'SET_TARGET' }>, p: PrivatePlayer): void {
-  if (!isActivePhase(tx.s.phase)) return reject(tx, action, 'not_playing');
-  if (p.status === 'eliminated') return reject(tx, action, 'eliminated');
-  if (!(p.targetOptions ?? []).includes(action.targetId)) return reject(tx, action, 'invalid_target');
-  if (p.targetId !== action.targetId) {
-    p.targetId = action.targetId;
-    tx.changed = true;
-  }
 }
 
 function canStartMatch(s: PrivateGameState): boolean {
@@ -470,7 +420,7 @@ function startMatch(tx: Tx): void {
   s.matchNumber += 1;
   s.rowCounter = 0;
   s.players.forEach((p, i) => resetPlayerForMatch(p, s.settings, secrets[i] as string)); // GR-3
-  assignTargets(s.players, ctx.rng, s.settings.targetChoices, true); // battle royale: random, balanced shortlists
+  applyPairing(s.players);
   s.phase = 'COUNTDOWN'; // GR-4
   s.phaseEndsAt = ctx.now + s.settings.countdownMs;
   s.overtimeUsed = false;
@@ -492,13 +442,8 @@ function handleStart(tx: Tx, action: Extract<ClientAction, { type: 'START' }>, p
 function handleRematch(tx: Tx, action: Extract<ClientAction, { type: 'REMATCH' }>, p: PrivatePlayer): void {
   if (p.id !== tx.s.hostId) return reject(tx, action, 'not_host');
   if (tx.s.phase !== 'FINISHED') return reject(tx, action, 'not_playing');
-  // Players who left the room do not block a rematch, and spectators waiting to play take free
-  // seats (up to the cap). Only a lone player is refused — a match needs at least two.
-  if (nextMatchSize(tx.s) < 2) return reject(tx, action, 'not_enough_players');
-  tx.s.players = playersStillHere(tx.s.players, tx.s.hostId);
-  promoteSpectators(tx, true);
   if (!canStartMatch(tx.s)) return reject(tx, action, 'not_enough_players');
-  startMatch(tx); // GR-37: new secrets, state reset, back to countdown
+  startMatch(tx); // GR-37: same room + players, new secrets, state reset, back to countdown
 }
 
 function handleReturnToLobby(
@@ -515,11 +460,10 @@ function handleReturnToLobby(
   delete s.playStartedAt;
   delete s.finishedAt;
   s.overtimeUsed = false;
-  s.players = playersStillHere(s.players, s.hostId);
+  s.players = s.players.filter((pl) => pl.connected || pl.id === s.hostId);
   for (const pl of s.players) {
     resetPlayerForMatch(pl, s.settings, '');
     delete pl.targetId;
-    delete pl.targetOptions;
   }
   tx.changed = true;
   promoteSpectators(tx);
@@ -540,12 +484,5 @@ function handleUpdateSettings(
     throw err;
   }
   for (const pl of s.players) pl.rowLimit = s.settings.baseRows;
-  // Lowered cap: the most recent non-host joiners wait as spectators (first in line if it rises again).
-  while (s.players.length > s.settings.maxPlayers) {
-    const idx = s.players.map((pl) => pl.id !== s.hostId).lastIndexOf(true);
-    const [moved] = s.players.splice(idx, 1);
-    if (moved) s.spectators.unshift({ id: moved.id, nickname: moved.nickname, connected: moved.connected, wantsToPlay: true, joinedAt: 0 });
-  }
   tx.changed = true;
-  promoteSpectators(tx); // raised cap: waiting spectators join
 }

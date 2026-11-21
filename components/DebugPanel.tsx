@@ -33,7 +33,7 @@ export function DebugPanel() {
   const duration = g.playStartedAt ? ((g.finishedAt ?? hostNow) - g.playStartedAt) / 1000 : 0;
   return (
     <aside
-      className="fixed bottom-2 left-2 z-50 rounded-lg border border-shield-ink/40 bg-night/90 px-3 py-2 font-mono text-[10px] leading-4 text-shield-ink"
+      className="fixed bottom-2 left-2 z-50 rounded-lg border border-shield/40 bg-night/90 px-3 py-2 font-mono text-[10px] leading-4 text-shield"
       data-testid="debug-panel"
     >
       <div>

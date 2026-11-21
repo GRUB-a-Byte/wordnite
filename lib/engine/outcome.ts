@@ -75,27 +75,6 @@ export function evaluateOutcome(
 }
 
 /**
- * Final placings (battle royale, SRS §13): solvers by fewest rows / earliest solve; then players
- * still standing unsolved (fewest rows used first); then eliminated players, most recently
- * eliminated first. Stable: ties keep join order. The match winner is always placed first, because
- * every way of winning (last standing, best solver, unbeatable, timeout) agrees with this order.
- */
-export function rankPlayers<P extends PublicPlayer>(players: readonly P[]): P[] {
-  const solvers = rankSolvers(players.filter((p) => p.status === 'invulnerable'));
-  const alive = players
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => p.status === 'alive')
-    .sort((a, b) => a.p.rowsUsed - b.p.rowsUsed || a.i - b.i)
-    .map(({ p }) => p);
-  const out = players
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => p.status === 'eliminated')
-    .sort((a, b) => (b.p.eliminatedAt ?? 0) - (a.p.eliminatedAt ?? 0) || b.i - a.i)
-    .map(({ p }) => p);
-  return [...solvers, ...alive, ...out];
-}
-
-/**
  * GR-30 / GR-33: what happens when the match or overtime clock runs out.
  *  - at least one solver → best solver wins ("timeout_solver")
  *  - nobody solved, overtime still available → 'overtime'

@@ -186,7 +186,7 @@ describe('steals (GR-20 … GR-24)', () => {
     const res = sim.steal(A, 'SLATE');
     expect(sim.p(B)).toMatchObject({ status: 'eliminated', eliminationReason: 'stolen', eliminatedBy: A });
     expect(sim.state.phase).toBe('FINISHED');
-    expect(sim.state.result).toMatchObject({ outcome: 'win', winnerId: A, loserId: B, reason: 'stolen' });
+    expect(sim.state.result).toEqual({ outcome: 'win', winnerId: A, loserId: B, reason: 'stolen' });
     expect(res.events.map((e) => e.type)).toEqual(['ROW_ADDED', 'STEAL_HIT', 'ELIMINATED', 'FINISHED']);
   });
 
@@ -280,7 +280,7 @@ describe('unbeatable early finish (GR-28, E-7) — FIX 5', () => {
     expect(sim.state.phase).toBe('PLAYING');
     sim.burn(B, 1); // B at 3 ≥ 4 − 1
     expect(sim.state.phase).toBe('FINISHED');
-    expect(sim.state.result).toMatchObject({ outcome: 'win', winnerId: A, loserId: B, reason: 'unbeatable' });
+    expect(sim.state.result).toEqual({ outcome: 'win', winnerId: A, loserId: B, reason: 'unbeatable' });
     // The loser was NOT eliminated by a steal (UI must not claim so).
     expect(sim.p(B).status).toBe('alive');
     expect(sim.state.lastEvents.some((e) => e.type === 'ELIMINATED' || e.type === 'STEAL_HIT')).toBe(false);
@@ -393,7 +393,7 @@ describe('timers and overtime (GR-30 … GR-34, E-19)', () => {
     const sim = new Sim().startPlaying();
     sim.advance(DEFAULT_SETTINGS.matchMs);
     sim.advance(DEFAULT_SETTINGS.overtimeMs);
-    expect(sim.state.result).toMatchObject({ outcome: 'draw', reason: 'overtime_expired' });
+    expect(sim.state.result).toEqual({ outcome: 'draw', reason: 'overtime_expired' });
   });
 
   it('GR-33: overtime timeout with one solver → solver wins', () => {

@@ -2,7 +2,6 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ThemeToggle } from '@/components/ThemeToggle';
 import { HowToPlay } from '@/components/HowToPlay';
 import { Logo } from '@/components/Logo';
 import { createRoom } from '@/lib/client/claimRoom';
@@ -73,9 +72,6 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col items-center justify-center gap-8 px-5 py-10">
-      <div className="fixed top-3 right-3 z-10">
-        <ThemeToggle />
-      </div>
       <div className="flex flex-col items-center gap-3 text-center">
         <Logo size="lg" />
         <p className="text-muted">Solve your word. Steal theirs. Last one standing wins.</p>
@@ -90,7 +86,7 @@ export default function HomePage() {
             maxLength={NICKNAME_MAX}
             placeholder="e.g. wordwizard"
             autoComplete="nickname"
-            className="w-full rounded-xl border border-line bg-night px-4 py-3 text-lg font-semibold outline-none focus:border-blue-ink"
+            className="w-full rounded-xl border border-line bg-night px-4 py-3 text-lg font-semibold outline-none focus:border-royal"
             data-testid="nickname-input"
           />
         </label>
@@ -99,7 +95,7 @@ export default function HomePage() {
           type="button"
           onClick={onCreate}
           disabled={busy !== null}
-          className="w-full rounded-xl bg-gradient-to-r from-royal to-blue px-4 py-3.5 text-lg font-black tracking-wide text-on-accent shadow-lg transition hover:brightness-110 disabled:opacity-60"
+          className="w-full rounded-xl bg-gradient-to-r from-royal to-fuchsia-500 px-4 py-3.5 text-lg font-black tracking-wide text-white shadow-lg transition hover:brightness-110 disabled:opacity-60"
           data-testid="create-room"
         >
           {busy === 'create' ? 'Creating…' : 'Create room'}
@@ -123,7 +119,7 @@ export default function HomePage() {
           <button
             type="submit"
             disabled={busy !== null}
-            className="rounded-xl border border-royal-2 bg-royal-2 px-5 py-3 font-bold text-on-accent transition hover:brightness-110 disabled:opacity-60"
+            className="rounded-xl border border-royal-2/60 bg-royal-2/10 px-5 py-3 font-bold text-royal-2 transition hover:bg-royal-2/20 disabled:opacity-60"
             data-testid="join-room"
           >
             Join
@@ -131,7 +127,7 @@ export default function HomePage() {
         </form>
 
         {error && (
-          <p role="alert" className="text-center text-sm font-semibold text-steal-ink">
+          <p role="alert" className="text-center text-sm font-semibold text-steal">
             {error}
           </p>
         )}
