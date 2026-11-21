@@ -15,11 +15,22 @@ export function Banners() {
   );
   const solved = useLatestFx('SOLVED');
   const overtime = useLatestFx('OVERTIME_START');
+  // FR-8.2: "New challenger" when a hill-holder is re-paired (never at the start of a plain 1v1).
+  const paired = useLatestFx('PAIRED', (e) => e.playerIds.includes(me) && players.some((p) => (p.streak ?? 0) > 0));
   const name = (id: string) => players.find((p) => p.id === id)?.nickname ?? '?';
   const amPlayer = players.some((p) => p.id === me);
 
   let banner: { key: string; text: string; tone: string } | null = null;
-  if (overtime && (!solved || overtime.id > solved.id)) {
+  const newest = Math.max(overtime?.id ?? 0, solved?.id ?? 0);
+  if (paired && paired.id > newest) {
+    const opp = paired.event.playerIds.find((id) => id !== me);
+    const oppStreak = players.find((p) => p.id === opp)?.streak ?? 0;
+    banner = {
+      key: `paired-${paired.id}`,
+      text: `⚔ New challenger: ${name(opp ?? '')}${oppStreak > 0 ? ` (👑${oppStreak})` : ''}`,
+      tone: 'bg-gradient-to-r from-royal to-fuchsia-500 text-white',
+    };
+  } else if (overtime && (!solved || overtime.id > solved.id)) {
     banner = {
       key: `ot-${overtime.id}`,
       text: `OVERTIME! +${overtime.event.extraRows} rows each — ${formatClock(overtimeMs)} on the clock`,

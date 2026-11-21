@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { GameEvent } from '@/lib/engine/types';
+import type { RoomEvent } from '@/lib/engine/types';
 import { useRoom, type FxEntry } from '@/lib/client/store';
 
 /** Re-renders every `intervalMs` and returns the current time (kept in state → pure renders). */
@@ -30,14 +30,14 @@ export function usePhaseRemaining(intervalMs = 200): number | null {
   return Math.max(0, phaseEndsAt - (now + offset));
 }
 
-type EventOf<T extends GameEvent['type']> = Extract<GameEvent, { type: T }>;
+type EventOf<T extends RoomEvent['type']> = Extract<RoomEvent, { type: T }>;
 
 /**
  * Most recent synchronized game event of `type` matching `pred`, while it is still in the store's
  * short-lived fx buffer (RoomClient expires entries after ~4 s). Overlays key their one-shot,
  * self-fading animations on the returned entry id.
  */
-export function useLatestFx<T extends GameEvent['type']>(
+export function useLatestFx<T extends RoomEvent['type']>(
   type: T,
   pred: (e: EventOf<T>) => boolean = () => true,
 ): (FxEntry & { event: EventOf<T> }) | null {

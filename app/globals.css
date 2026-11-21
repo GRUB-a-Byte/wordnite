@@ -100,6 +100,13 @@ body {
 :root[data-big='1'] .board-large {
   --tile-size: min(clamp(40px, min(8.5vw, 7.4vh), 120px), var(--fit, 999px));
 }
+.board-mini {
+  /* v1.1 multi-duel grid (FR-7.1) and waiting-room live view (FR-8.1) */
+  --tile-size: clamp(11px, min(2.6vw, 2.4vh), 22px);
+}
+:root[data-big='1'] .board-mini {
+  --tile-size: clamp(14px, min(3.2vw, 3vh), 30px);
+}
 .board-end {
   --tile-size: clamp(22px, min(6vw, 3.6vh), 44px);
 }

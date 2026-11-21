@@ -18,6 +18,7 @@ describe('GameSettings (FIX 3)', () => {
       hostGraceMs: 10000,
       maxPlayers: 2,
       enableUnbeatableEarlyFinish: true,
+      resultBeatMs: 6000,
     });
     expect(settingsProblems({ ...DEFAULT_SETTINGS })).toEqual([]);
     expect(Object.isFrozen(DEFAULT_SETTINGS)).toBe(true);
@@ -31,7 +32,10 @@ describe('GameSettings (FIX 3)', () => {
   it('rejects invalid values', () => {
     expect(() => resolveSettings({ baseRows: 0 })).toThrow(InvalidSettingsError);
     expect(() => resolveSettings({ matchMs: 1.5 })).toThrow(InvalidSettingsError);
-    expect(() => resolveSettings({ maxPlayers: 8 })).toThrow(/two players/);
+    expect(resolveSettings({ maxPlayers: 16 }).maxPlayers).toBe(16); // KH-1
+    expect(() => resolveSettings({ maxPlayers: 1 })).toThrow(/2 to 16/);
+    expect(() => resolveSettings({ maxPlayers: 17 })).toThrow(/2 to 16/);
+    expect(() => resolveSettings({ resultBeatMs: -1 })).toThrow(InvalidSettingsError);
     expect(() => resolveSettings({ wordLength: 6 })).toThrow(/5-letter/);
     expect(() =>
       resolveSettings({ enableUnbeatableEarlyFinish: 'no' as unknown as boolean }),

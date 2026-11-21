@@ -1,11 +1,10 @@
-import { findLeakedSecrets, toPublicState } from '@/lib/engine/project';
-import { reduce } from '@/lib/engine/reducer';
-import { createLobbyState, isActivePhase } from '@/lib/engine/state';
+import { findLeakedSessionSecrets, toPublicSession } from '@/lib/engine/project';
+import { createSessionLobby, reduceSession } from '@/lib/engine/session';
 import type {
   EngineAction,
   GameSettings,
-  PrivateGameState,
-  PublicGameState,
+  PrivateSessionState,
+  PublicSessionState,
   WordDictionary,
 } from '@/lib/engine/types';
 import { parseClientAction, type PresenceMeta } from './protocol';
@@ -25,7 +24,7 @@ export interface HostRunnerOptions {
   storage: KV | null;
   now?: () => number;
   /** Applies the public snapshot to the host's own UI immediately (no network round trip). */
-  onPublicState: (s: PublicGameState) => void;
+  onPublicState: (s: PublicSessionState) => void;
   debug?: boolean;
   tickMs?: number;
 }
@@ -36,7 +35,8 @@ export const beatKey = (code: string) => `wr:hostbeat:${code}`;
 /**
  * The referee loop that runs in the host's browser (SRS §8.1, D-13).
  *
- *  - Owns the authoritative PrivateGameState (with secrets). Only `toPublicState()` output is sent.
+ *  - Owns the authoritative PrivateSessionState (every duel, with secrets). Only
+ *    `toPublicSession()` output is sent (v1.1 king of the hill; each duel runs the 1.0 reducer).
  *  - Applies actions strictly one at a time in arrival order (JS is single-threaded and every
  *    dispatch is synchronous, so this is a FIFO queue by construction).
  *  - TICKs every 250 ms; the reducer also checks deadlines on every action (FIX 6).
@@ -44,7 +44,7 @@ export const beatKey = (code: string) => `wr:hostbeat:${code}`;
  *  - Abandons the match if the host itself has been offline longer than hostGraceMs (GR-36).
  */
 export class HostRunner {
-  private state: PrivateGameState;
+  private state: PrivateSessionState;
   private readonly o: HostRunnerOptions;
   private readonly now: () => number;
   private unsubs: (() => void)[] = [];
@@ -62,17 +62,29 @@ export class HostRunner {
     this.restored = !!restored;
     this.state =
       restored ??
-      createLobbyState({
+      createSessionLobby({
         roomCode: opts.roomCode,
         hostId: opts.hostId,
         hostNickname: opts.hostNickname,
         settings: opts.settings,
+        now: this.now(),
       });
   }
 
   /** Read-only snapshot (debug / tests). Contains secrets — never send this anywhere. */
-  get privateState(): PrivateGameState {
+  get privateState(): PrivateSessionState {
     return this.state;
+  }
+
+  /** Debug / e2e only (`?debug=1`): each player's secret in their current or latest duel. */
+  secretsByPlayer(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const p of this.state.players) {
+      const duel = this.state.duels.find((d) => d.id === p.duelId);
+      const secret = duel?.state.players.find((x) => x.id === p.id)?.secret;
+      if (secret) out[p.id] = secret;
+    }
+    return out;
   }
 
   start(): void {
@@ -89,7 +101,7 @@ export class HostRunner {
 
     // A host that comes back after more than hostGraceMs finds its match abandoned (GR-36): guests
     // have already shown "Host left" by then, so both sides must agree.
-    if (this.restored && isActivePhase(this.state.phase)) {
+    if (this.restored && this.state.phase === 'IN_PROGRESS') {
       const beat = Number(this.o.storage?.getItem(beatKey(this.o.roomCode)) ?? 0);
       if (!beat || this.now() - beat > this.state.settings.hostGraceMs) this.dispatch({ type: 'ABANDON' });
     }
@@ -110,7 +122,7 @@ export class HostRunner {
   dispatch(action: EngineAction): void {
     let res;
     try {
-      res = reduce(this.state, action, { now: this.now(), rng: this.o.rng, dictionary: this.o.dictionary });
+      res = reduceSession(this.state, action, { now: this.now(), rng: this.o.rng, dictionary: this.o.dictionary });
     } catch (err) {
       console.error('[host] engine error — action ignored', action, err);
       return;
@@ -132,14 +144,14 @@ export class HostRunner {
   private onTick(): void {
     const now = this.now();
     // GR-36 host side: our own connection has been down too long → abandon.
-    if (this.offlineSince !== null && isActivePhase(this.state.phase)) {
+    if (this.offlineSince !== null && this.state.phase === 'IN_PROGRESS') {
       if (now - this.offlineSince > this.state.settings.hostGraceMs) this.dispatch({ type: 'ABANDON' });
     }
     this.dispatch({ type: 'TICK' });
     if (now - this.lastBeatAt >= 1000) this.beat();
     // Safety net: Broadcast is at-most-once, so re-send the (full) snapshot every few seconds during
     // a match. Also keeps clients' clock offsets fresh.
-    if (isActivePhase(this.state.phase) && now - this.lastBroadcastAt > 3000) this.broadcast();
+    if (this.state.phase === 'IN_PROGRESS' && now - this.lastBroadcastAt > 3000) this.broadcast();
   }
 
   private onStatus(status: TransportStatus): void {
@@ -183,9 +195,9 @@ export class HostRunner {
 
   private broadcast(): void {
     const now = this.now();
-    const pub = toPublicState(this.state, now);
+    const pub = toPublicSession(this.state, now);
     if (this.o.debug || process.env.NODE_ENV !== 'production') {
-      const leaked = findLeakedSecrets(this.state, pub);
+      const leaked = findLeakedSessionSecrets(this.state, pub);
       if (leaked.length) {
         console.error('[host] BLOCKED a public state that contained an active secret', leaked);
         return;
@@ -213,12 +225,15 @@ export class HostRunner {
     }
   }
 
-  private restore(): PrivateGameState | null {
+  private restore(): PrivateSessionState | null {
     try {
       const raw = this.o.storage?.getItem(stateKey(this.o.roomCode));
       if (!raw) return null;
-      const s = JSON.parse(raw) as PrivateGameState;
-      if (s.roomCode !== this.o.roomCode || s.hostId !== this.o.hostId || !Array.isArray(s.players)) return null;
+      const s = JSON.parse(raw) as PrivateSessionState;
+      // A 1.0 snapshot (no `duels`) from before an upgrade is discarded rather than misread.
+      if (s.roomCode !== this.o.roomCode || s.hostId !== this.o.hostId || !Array.isArray(s.players) || !Array.isArray(s.duels)) {
+        return null;
+      }
       return s;
     } catch {
       return null;

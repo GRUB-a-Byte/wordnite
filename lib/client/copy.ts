@@ -15,8 +15,10 @@ export const REJECT_TEXT: Record<RejectReason, string> = {
   already_solved: 'You already solved — attack instead!',
   not_host: 'Only the host can do that',
   not_a_player: 'You’re spectating',
-  not_enough_players: 'Need 2 connected players',
+  not_enough_players: 'Need at least 2 connected players',
   invalid_settings: 'Invalid settings',
+  not_in_duel: 'You’re not in a duel right now',
+  stale_duel: 'That duel is over',
 };
 
 /** FR-6.1 outcome reasons (short headline form). */

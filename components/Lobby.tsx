@@ -42,7 +42,10 @@ export function Lobby() {
   const isHost = game.hostId === me;
   const players = game.players;
   const spectators = game.spectators.filter((s) => s.connected);
-  const ready = players.length === game.settings.maxPlayers && players.every((p) => p.connected);
+  const queued = spectators.filter((s) => s.wantsToPlay);
+  const cap = game.settings.maxPlayers;
+  // KH-2 / FR-2.2 (amended): at least 2 connected players, up to the cap.
+  const ready = players.length >= 2 && players.length <= cap && players.every((p) => p.connected);
   const amSpectator = !players.some((p) => p.id === me);
 
   const copy = async () => {
@@ -96,12 +99,17 @@ export function Lobby() {
                   {p.id === me && <span className="text-xs text-muted">(you)</span>}
                 </li>
               ))}
-              {players.length < game.settings.maxPlayers && (
+              {players.length < cap && (
                 <li className="rounded-xl border border-dashed border-line px-3 py-2 text-sm text-muted">
                   Waiting for a challenger…
                 </li>
               )}
             </ul>
+            {queued.length > 0 && (
+              <p className="mt-2 text-sm text-muted" data-testid="seat-queue">
+                Waiting for a seat: {queued.map((q) => q.nickname).join(', ')}
+              </p>
+            )}
             {spectators.length > 0 && (
               <p className="mt-2 text-sm text-muted" data-testid="spectator-count">
                 Spectators: {spectators.length}
@@ -111,6 +119,40 @@ export function Lobby() {
 
           {isHost ? (
             <div className="space-y-3">
+              {/* FR-2.6: player cap (KH-1) */}
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-panel-2 px-3 py-2 text-sm">
+                <span>
+                  <span className="font-bold">Player cap</span>
+                  <span className="block text-xs text-muted">
+                    {cap === 2 ? 'Classic 1v1 duel' : 'King of the hill — winners stay on, losers are out'}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => client.updateSettings({ maxPlayers: cap - 1 })}
+                    disabled={cap <= 2}
+                    className="h-8 w-8 rounded-lg border border-line font-black disabled:opacity-30"
+                    aria-label="Fewer players"
+                    data-testid="cap-down"
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center text-lg font-black tabular-nums" data-testid="player-cap">
+                    {cap}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => client.updateSettings({ maxPlayers: cap + 1 })}
+                    disabled={cap >= 16}
+                    className="h-8 w-8 rounded-lg border border-line font-black disabled:opacity-30"
+                    aria-label="More players"
+                    data-testid="cap-up"
+                  >
+                    +
+                  </button>
+                </span>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-xl bg-panel-2 px-3 py-2 text-sm">
                 <span>
                   <span className="font-bold">Unbeatable early finish</span>
@@ -137,7 +179,7 @@ export function Lobby() {
               >
                 START GAME
               </button>
-              {!ready && <p className="text-center text-sm text-muted">Need exactly 2 connected players.</p>}
+              {!ready && <p className="text-center text-sm text-muted">Need at least 2 connected players.</p>}
             </div>
           ) : (
             <p className="rounded-xl bg-panel-2 px-4 py-3 text-center font-bold text-muted" data-testid="waiting-host">

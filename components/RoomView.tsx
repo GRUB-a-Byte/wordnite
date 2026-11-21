@@ -14,6 +14,7 @@ import { GameView } from './GameView';
 import { Lobby } from './Lobby';
 import { Logo } from './Logo';
 import { RoomClientContext } from './RoomContext';
+import { DuelResult, GridView, WaitingRoom } from './SessionScreens';
 import { SpectatorView } from './SpectatorView';
 
 interface RoomViewProps {
@@ -125,11 +126,13 @@ function useShowEndScreen(game: PublicGameState | null): boolean {
 }
 
 function RoomScreens() {
-  const { configError, roomNotFound, localAbandoned, game, me } = useRoom(
+  const { configError, roomNotFound, localAbandoned, session, view, game, me } = useRoom(
     useShallow((s) => ({
       configError: s.configError,
       roomNotFound: s.roomNotFound,
       localAbandoned: s.localAbandoned,
+      session: s.session,
+      view: s.view,
       game: s.game,
       me: s.me,
     })),
@@ -137,26 +140,35 @@ function RoomScreens() {
   const showEnd = useShowEndScreen(game);
 
   if (configError) return <Message title="Realtime not configured" body={configError} />;
-  if (localAbandoned || game?.phase === 'ABANDONED') return <Abandoned />;
-  if (!game) {
+  if (localAbandoned || view === 'abandoned') return <Abandoned />;
+  if (!session) {
     return roomNotFound ? (
       <Message title="Room not found" body="Nobody is hosting this room. Check the code or create a new room." />
     ) : (
       <Message title="Connecting…" body="Looking for the host" spinner />
     );
   }
-  const isPlayer = game.players.some((p) => p.id === me);
-  switch (game.phase) {
-    case 'LOBBY':
+  const inGame = !!game?.players.some((p) => p.id === me);
+  // v1.1: the screen follows the viewer's place in the session (lib/client/view.ts).
+  switch (view) {
+    case 'lobby':
       return <Lobby />;
-    case 'COUNTDOWN':
-    case 'PLAYING':
-    case 'OVERTIME':
-      return isPlayer ? <GameView /> : <SpectatorView />;
-    case 'FINISHED':
-      return showEnd ? <EndScreen /> : isPlayer ? <GameView /> : <SpectatorView />;
+    case 'duel':
+      return <GameView />;
+    case 'duel_result':
+      // Hold the final board briefly (steal shatter, FR-4.6), then the result card (FR-6.5).
+      return showEnd ? <DuelResult /> : <GameView />;
+    case 'waiting':
+      return <WaitingRoom />;
+    case 'watch':
+      return <SpectatorView />;
+    case 'grid':
+      return <GridView />;
+    case 'finished':
+      if (!game) return <EndScreen />;
+      return showEnd ? <EndScreen /> : inGame ? <GameView /> : <SpectatorView />;
     default:
-      return null;
+      return <Message title="Connecting…" body="Looking for the host" spinner />;
   }
 }
 

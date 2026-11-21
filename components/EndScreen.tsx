@@ -10,6 +10,7 @@ import { Board } from './Board';
 import { DebugPanel } from './DebugPanel';
 import { RoomHeader } from './RoomHeader';
 import { useRoomClient } from './RoomContext';
+import { ordinal, Standings } from './SessionBits';
 import { Toasts } from './Toasts';
 
 const HEADLINE = {
@@ -20,14 +21,31 @@ const HEADLINE = {
   abandoned: ['Abandoned', 'from-muted to-line'],
 } as const;
 
-/** FR-6.1 … FR-6.4 */
+/**
+ * FR-6.1 … FR-6.4, and FR-6.6 (v1.1 session end). With two players this is exactly the 1.0 end
+ * screen (KH-14); with more it leads with the champion and the final standings.
+ */
 export function EndScreen() {
   const client = useRoomClient();
   const router = useRouter();
-  const { game, me } = useRoom(useShallow((s) => ({ game: s.game, me: s.me })));
+  const { game, session, me } = useRoom(useShallow((s) => ({ game: s.game, session: s.session, me: s.me })));
   const isPlayer = !!game?.players.some((p) => p.id === me);
   const [busy, setBusy] = useState(false);
-  const perspective = game ? perspectiveOf(game.result, me, isPlayer) : 'abandoned';
+  const multi = (session?.players.length ?? 0) > 2;
+  const sessionResult = session?.result;
+  const self = session?.players.find((p) => p.id === me);
+  const isChampion = !!sessionResult?.championId && sessionResult.championId === me;
+  const perspective = multi
+    ? isChampion
+      ? 'win'
+      : sessionResult?.outcome === 'draw'
+        ? 'draw'
+        : self
+          ? 'lose'
+          : 'spectator'
+    : game
+      ? perspectiveOf(game.result, me, isPlayer)
+      : 'abandoned';
 
   useEffect(() => {
     if (perspective !== 'win') return;
@@ -42,18 +60,26 @@ export function EndScreen() {
     };
   }, [perspective]);
 
-  if (!game || !game.result) return null;
-  const result = game.result;
-  const isHost = game.hostId === me;
-  const [headline, gradient] = HEADLINE[perspective];
-  const winnerName = game.players.find((p) => p.id === result.winnerId)?.nickname;
-  const allConnected = game.players.every((p) => p.connected);
+  if (!session || (!multi && !game?.result)) return null;
+  const result = game?.result;
+  const isHost = session.hostId === me;
+  const [baseHeadline, gradient] = HEADLINE[perspective];
+  let headline: string = baseHeadline;
+  const championName = session.players.find((p) => p.id === sessionResult?.championId)?.nickname;
+  if (multi) {
+    if (perspective === 'win') headline = 'Champion!';
+    else if (perspective === 'lose') headline = `Knocked out — ${ordinal(self?.rank ?? session.players.length)}`;
+    else if (perspective === 'spectator') headline = 'Session over';
+  }
+  const winnerName = multi ? championName : game?.players.find((p) => p.id === result?.winnerId)?.nickname;
+  // KH-13: a new session needs at least two connected players (the 1.0 duel: both).
+  const connectedPlayers = session.players.filter((p) => p.connected).length;
+  const canRestart = multi ? connectedPlayers >= 2 : !!game?.players.every((p) => p.connected);
   const duration =
-    game.playStartedAt && game.finishedAt ? Math.max(0, Math.round((game.finishedAt - game.playStartedAt) / 1000)) : null;
+    game?.playStartedAt && game.finishedAt ? Math.max(0, Math.round((game.finishedAt - game.playStartedAt) / 1000)) : null;
   // Own board on the left for players.
-  const ordered = isPlayer
-    ? [...game.players.filter((p) => p.id === me), ...game.players.filter((p) => p.id !== me)]
-    : game.players;
+  const players = game?.players ?? [];
+  const ordered = isPlayer ? [...players.filter((p) => p.id === me), ...players.filter((p) => p.id !== me)] : players;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -71,11 +97,24 @@ export function EndScreen() {
           >
             {headline}
           </h1>
-          {perspective === 'spectator' && winnerName && <p className="text-xl font-black">{winnerName} wins</p>}
-          <p className="text-lg font-bold text-ink" data-testid="end-reason">
-            {REASON_TEXT[result.reason]}
-          </p>
-          <p className="max-w-lg text-sm text-muted">{explainResult(result, game.players, me)}</p>
+          {perspective === 'spectator' && winnerName && (
+            <p className="text-xl font-black">{multi ? `👑 ${winnerName} is champion` : `${winnerName} wins`}</p>
+          )}
+          {multi && perspective === 'lose' && championName && (
+            <p className="text-xl font-black">👑 {championName} is champion</p>
+          )}
+          {multi && sessionResult?.outcome === 'draw' && (
+            <p className="text-lg font-bold">The final duel was a draw — nobody takes the hill.</p>
+          )}
+          {result && (
+            <>
+              <p className="text-lg font-bold text-ink" data-testid="end-reason">
+                {multi ? 'Final duel: ' : ''}
+                {REASON_TEXT[result.reason]}
+              </p>
+              <p className="max-w-lg text-sm text-muted">{explainResult(result, players, me)}</p>
+            </>
+          )}
           {duration !== null && <p className="text-xs text-muted">Match length {Math.floor(duration / 60)}:{String(duration % 60).padStart(2, '0')}</p>}
         </m.div>
 
@@ -89,11 +128,11 @@ export function EndScreen() {
                   client.rematch();
                   setTimeout(() => setBusy(false), 3000);
                 }}
-                disabled={busy || !allConnected}
+                disabled={busy || !canRestart}
                 className="rounded-xl bg-gradient-to-r from-correct to-royal-2 px-6 py-3 text-lg font-black text-night shadow-lg hover:brightness-110 disabled:opacity-40"
                 data-testid="rematch"
               >
-                Rematch
+                {multi ? 'New session' : 'Rematch'}
               </button>
               <button
                 type="button"
@@ -122,18 +161,20 @@ export function EndScreen() {
             Leave
           </button>
         </div>
-        {isHost && !allConnected && <p className="text-sm text-muted">Opponent left — go back to the lobby for a new challenger.</p>}
+        {isHost && !canRestart && <p className="text-sm text-muted">Opponent left — go back to the lobby for a new challenger.</p>}
+
+        {multi && sessionResult && <Standings standings={sessionResult.standings} me={me} />}
 
         <div className="flex w-full flex-wrap items-start justify-center gap-3 sm:gap-6">
           {ordered.map((p) => (
             <Board
               key={p.id}
               player={p}
-              game={game}
+              game={game!}
               viewer={p.id === me ? 'me' : 'spectator'}
               variant="end"
               overlays={false}
-              revealedSecret={game.revealedSecrets?.[p.id]}
+              revealedSecret={game?.revealedSecrets?.[p.id]}
             />
           ))}
         </div>

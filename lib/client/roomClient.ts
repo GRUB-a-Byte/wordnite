@@ -6,11 +6,12 @@ import type {
   GameSettings,
   PresenceRole,
   PublicGameState,
+  PublicSessionState,
   WordDictionary,
 } from '@/lib/engine/types';
 import type { HostRunner } from '@/lib/realtime/hostRunner';
 import {
-  looksLikePublicState,
+  looksLikePublicSession,
   parseDraft,
   parseRejection,
   type DraftPayload,
@@ -22,7 +23,9 @@ import { REJECT_TEXT } from './copy';
 import { randomSeed } from './ids';
 import { loadSeq, saveSeq } from './identity';
 import { markRevealed } from './revealed';
+import { spaceAction } from './shortcuts';
 import { initialRoomState, myPlayer, targetOf, useRoom, type InputMode, type Toast } from './store';
+import { eventsForView, selectView } from './view';
 
 export interface RoomClientOptions {
   roomCode: string;
@@ -169,8 +172,8 @@ export class RoomClient {
   // -------------------------------------------------------------------------------------------
 
   private onState(raw: unknown): void {
-    if (!looksLikePublicState(raw) || raw.roomCode !== this.o.roomCode) return;
-    const cur = useRoom.getState().game;
+    if (!looksLikePublicSession(raw) || raw.roomCode !== this.o.roomCode) return;
+    const cur = useRoom.getState().session;
     // Once we have followed a referee, ignore snapshots from any other "host" id (see the
     // security notes in docs/ARCHITECTURE.md — this is a sanity check, not authentication).
     if (cur && raw.hostId !== cur.hostId) return;
@@ -189,28 +192,11 @@ export class RoomClient {
     useRoom.setState({ clockOffset: Math.max(...this.offsetSamples) });
   }
 
-  applyState(pub: PublicGameState): void {
+  applyState(pub: PublicSessionState): void {
     if (this.disposed) return;
     const prev = useRoom.getState();
-    const prevGame = prev.game;
-    const patch: Partial<typeof prev> = { game: pub, localAbandoned: false, roomNotFound: false };
+    const patch: Partial<typeof prev> = { session: pub, localAbandoned: false, roomNotFound: false };
     this.hostMissingSince = null;
-
-    // Synchronised animation events (lastEvents) — never replay history on first sync.
-    const newest = pub.lastEvents.reduce((m, e) => Math.max(m, e.id), 0);
-    if (this.seenEventId < 0) {
-      this.seenEventId = newest;
-      markRevealed(pub.players.flatMap((p) => p.rows.map((r) => r.id)));
-    } else if (newest > this.seenEventId) {
-      const fresh = pub.lastEvents.filter((e) => e.id > this.seenEventId);
-      this.seenEventId = newest;
-      const now = Date.now();
-      patch.fx = [...prev.fx, ...fresh.map((event) => ({ id: event.id, event, at: now }))].slice(-16);
-      const ids = new Set(fresh.map((e) => e.id));
-      setTimeout(() => {
-        useRoom.setState({ fx: useRoom.getState().fx.filter((f) => !ids.has(f.id)) });
-      }, FX_TTL_MS);
-    }
 
     const me = pub.players.find((p) => p.id === this.o.playerId);
     if (me) {
@@ -221,14 +207,58 @@ export class RoomClient {
         patch.latencies = [...prev.latencies, Date.now() - prev.pending.sentAt].slice(-50);
       }
     }
+    useRoom.setState(patch);
+    const view = this.refreshView(true);
 
-    // New match (start / rematch): clear all input state.
-    if (prevGame && pub.matchNumber !== prevGame.matchNumber) {
+    // Synchronised animation events (lastEvents) — never replay history on first sync. Only the
+    // events of the duel on screen are kept, so another duel's overtime never fires here.
+    const newest = pub.lastEvents.reduce((m, e) => Math.max(m, e.id), 0);
+    if (this.seenEventId < 0) {
+      this.seenEventId = newest;
+      markRevealed(pub.duels.flatMap((d) => d.players.flatMap((p) => p.rows.map((r) => r.id))));
+    } else if (newest > this.seenEventId) {
+      const fresh = eventsForView(
+        pub.lastEvents.filter((e) => e.id > this.seenEventId),
+        view,
+      );
+      this.seenEventId = newest;
+      const now = Date.now();
+      const fx = useRoom.getState().fx;
+      useRoom.setState({ fx: [...fx, ...fresh.map((event) => ({ id: event.id, event, at: now }))].slice(-24) });
+      const ids = new Set(fresh.map((e) => e.id));
+      setTimeout(() => {
+        useRoom.setState({ fx: useRoom.getState().fx.filter((f) => !ids.has(f.id)) });
+      }, FX_TTL_MS);
+    }
+  }
+
+  /**
+   * Recomputes which screen / duel this viewer sees (lib/client/view.ts). Runs on every snapshot and
+   * from the watchdog, because a knocked-out player's result card expires by the clock.
+   */
+  private refreshView(force = false) {
+    const s = useRoom.getState();
+    const view = selectView(s.session, this.o.playerId, {
+      hostNow: Date.now() + s.clockOffset,
+      dismissedDuelId: s.dismissedDuelId,
+    });
+    if (!force && view.kind === s.view && view.duelId === s.viewDuelId) return view;
+    const prevGame = s.game;
+    const patch: Partial<typeof s> = { view: view.kind, viewDuelId: view.duelId, game: view.game };
+    // New duel on screen (start / re-pairing / new session): clear all input state.
+    if (prevGame && view.game && view.game.matchNumber !== prevGame.matchNumber) {
       Object.assign(patch, { draft: '', pending: null, mode: 'own' as InputMode, drafts: {} });
     }
-
     useRoom.setState(patch);
     this.reconcileMode(prevGame);
+    return view;
+  }
+
+  /** FR-6.5: skip a result card and go straight to spectating. */
+  dismissResult(): void {
+    const id = useRoom.getState().viewDuelId;
+    useRoom.setState({ dismissedDuelId: id });
+    this.refreshView();
   }
 
   /** FR-4.4 / FR-4.7: keep the input mode legal as statuses change. */
@@ -295,6 +325,7 @@ export class RoomClient {
   }
 
   private onWatchdog(): void {
+    this.refreshView();
     const s = useRoom.getState();
     const now = Date.now();
 
@@ -309,8 +340,15 @@ export class RoomClient {
         this.transport?.send(
           'action',
           p.kind === 'own'
-            ? { type: 'GUESS', playerId: this.o.playerId, clientSeq: p.clientSeq, word: p.word }
-            : { type: 'STEAL', playerId: this.o.playerId, clientSeq: p.clientSeq, word: p.word, targetId: p.targetId },
+            ? { type: 'GUESS', playerId: this.o.playerId, clientSeq: p.clientSeq, word: p.word, duelId: p.duelId }
+            : {
+                type: 'STEAL',
+                playerId: this.o.playerId,
+                clientSeq: p.clientSeq,
+                word: p.word,
+                targetId: p.targetId,
+                duelId: p.duelId,
+              },
         );
         useRoom.setState({ pending: { ...p, resent: true } });
       } else if (age > SYNC_AFTER_MS && !s.pending.syncRequested) {
@@ -322,7 +360,7 @@ export class RoomClient {
     if (this.isHost) return;
 
     // No snapshot yet: keep asking; E-17 room-not-found after 5 s without a host.
-    if (!s.game && s.connection === 'connected') {
+    if (!s.session && s.connection === 'connected') {
       this.requestSync();
       if (!s.hostPresent && this.connectedAt && now - this.connectedAt > ROOM_NOT_FOUND_MS && !s.roomNotFound) {
         useRoom.setState({ roomNotFound: true });
@@ -330,8 +368,8 @@ export class RoomClient {
     }
 
     // GR-36 (client side): host absent longer than its grace period.
-    if (s.game && !s.hostPresent && this.hostMissingSince !== null && !s.localAbandoned) {
-      if (now - this.hostMissingSince > s.game.settings.hostGraceMs && s.game.phase !== 'ABANDONED') {
+    if (s.session && !s.hostPresent && this.hostMissingSince !== null && !s.localAbandoned) {
+      if (now - this.hostMissingSince > s.session.settings.hostGraceMs && s.session.phase !== 'ABANDONED') {
         useRoom.setState({ localAbandoned: true });
       }
     }
@@ -352,8 +390,9 @@ export class RoomClient {
     this.sendAction({ type: 'START' });
   }
 
+  /** KH-13: "New session" (the 1.0 Rematch button). */
   rematch(): void {
-    this.sendAction({ type: 'REMATCH' });
+    this.sendAction({ type: 'NEW_SESSION' });
   }
 
   returnToLobby(): void {
@@ -412,6 +451,14 @@ export class RoomClient {
     this.setMode(useRoom.getState().mode === 'own' ? 'steal' : 'own');
   }
 
+  /** FR-4.2a: Space toggles own ⇄ steal. Ignored outside play and once shielded (steal-only). */
+  spaceToggle(repeat: boolean): void {
+    const s = useRoom.getState();
+    const me = myPlayer(s);
+    const action = spaceAction({ phase: s.game?.phase, status: me?.status, repeat });
+    if (action === 'toggle') this.toggleMode();
+  }
+
   typeLetter(ch: string): void {
     const letter = ch.toUpperCase();
     if (!/^[A-Z]$/.test(letter) || !this.canType()) return;
@@ -450,20 +497,29 @@ export class RoomClient {
     const target = targetOf(s);
     if (mode === 'own') {
       if (me.rows.some((r) => r.targetId === me.id && r.word === word)) return reject(REJECT_TEXT.duplicate);
-      const clientSeq = this.sendAction({ type: 'GUESS', word });
+      const clientSeq = this.sendAction({ type: 'GUESS', word, duelId: s.viewDuelId });
       this.setPending(clientSeq, word, 'own', me.id);
     } else {
       const blocked = this.stealBlockReason();
       if (blocked || !target) return reject(blocked ?? 'No target');
       if (me.rows.some((r) => r.targetId === target.id && r.word === word)) return reject(REJECT_TEXT.duplicate);
-      const clientSeq = this.sendAction({ type: 'STEAL', targetId: target.id, word });
+      const clientSeq = this.sendAction({ type: 'STEAL', targetId: target.id, word, duelId: s.viewDuelId });
       this.setPending(clientSeq, word, 'steal', target.id);
     }
   }
 
   private setPending(clientSeq: number, word: string, kind: 'own' | 'steal', targetId: string): void {
     useRoom.setState({
-      pending: { clientSeq, word, kind, targetId, sentAt: Date.now(), syncRequested: false, resent: false },
+      pending: {
+        clientSeq,
+        duelId: useRoom.getState().viewDuelId,
+        word,
+        kind,
+        targetId,
+        sentAt: Date.now(),
+        syncRequested: false,
+        resent: false,
+      },
       draft: '',
     });
     this.scheduleDraft(true);
@@ -485,6 +541,7 @@ export class RoomClient {
         mode: cur.mode,
         targetId: cur.mode === 'steal' ? target?.id : undefined,
         matchNumber: cur.game?.matchNumber ?? 0,
+        duelId: cur.viewDuelId,
       };
       this.transport?.send('draft', payload);
     };

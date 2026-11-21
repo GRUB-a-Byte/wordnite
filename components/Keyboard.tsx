@@ -57,7 +57,7 @@ export function Keyboard() {
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => client.setMode('steal')}
           disabled={!!stealBlocked}
-          title={stealBlocked ?? 'Tab to toggle'}
+          title={stealBlocked ?? 'Space or Tab to toggle'}
           aria-pressed={attacking}
           className={`rounded-full border px-3 py-1.5 text-xs font-black tracking-wide uppercase transition sm:text-sm ${
             attacking ? 'border-steal bg-steal/20 text-steal' : 'border-line text-muted hover:text-ink'
@@ -68,6 +68,12 @@ export function Keyboard() {
         </button>
         {stealBlocked && me.status !== 'eliminated' && (
           <span className="text-[11px] text-muted">{stealBlocked}</span>
+        )}
+        {/* FR-4.2a.4: key hint, only where a physical keyboard is likely (fine pointer). */}
+        {!stealBlocked && me.status === 'alive' && (
+          <kbd className="hidden rounded border border-line px-1.5 py-0.5 text-[10px] font-bold text-muted [@media(pointer:fine)]:inline">
+            Space ⇄
+          </kbd>
         )}
       </div>
 

@@ -27,9 +27,11 @@ export interface GameSettings {
   overtimeMs: number; // GR-31
   guestGraceMs: number; // GR-35
   hostGraceMs: number; // GR-36
-  maxPlayers: number; // GR-1 (2 in release 1.0)
+  maxPlayers: number; // KH-1: player cap, 2..16 (default 2 = the 1.0 duel)
   /** GR-28 "unbeatable" early finish. FIX 5: isolated behind this flag for playtesting. */
   enableUnbeatableEarlyFinish: boolean;
+  /** KH-9: pause between a duel ending and its winner being re-paired / sent to the waiting room. */
+  resultBeatMs: number;
 }
 
 export interface Row {
@@ -66,6 +68,8 @@ export interface PublicPlayer {
   targetId?: string;
   /** Highest clientSeq the host has processed for this player (acts as the action ack, FIX 6). */
   lastSeq: number;
+  /** KH-7: duels won this session. Only set on duel views built from a session (FR-5.2 crown). */
+  streak?: number;
 }
 
 /** Referee-only player record. `secret` must never leave the host except via FINISHED reveal. */
@@ -157,9 +161,12 @@ export interface PublicGameState extends GameStateBase {
 
 export type ClientAction =
   | { type: 'START'; playerId: string; clientSeq: number }
-  | { type: 'GUESS'; playerId: string; word: string; clientSeq: number }
-  | { type: 'STEAL'; playerId: string; targetId: string; word: string; clientSeq: number }
+  /** `duelId` (v1.1): the duel the client thinks it is playing; a mismatch is rejected `stale_duel`. */
+  | { type: 'GUESS'; playerId: string; word: string; clientSeq: number; duelId?: string }
+  | { type: 'STEAL'; playerId: string; targetId: string; word: string; clientSeq: number; duelId?: string }
   | { type: 'REMATCH'; playerId: string; clientSeq: number }
+  /** KH-13: replaces REMATCH at session level (REMATCH is accepted as an alias). */
+  | { type: 'NEW_SESSION'; playerId: string; clientSeq: number }
   | { type: 'RETURN_TO_LOBBY'; playerId: string; clientSeq: number }
   | { type: 'UPDATE_SETTINGS'; playerId: string; clientSeq: number; patch: Partial<GameSettings> };
 
@@ -188,7 +195,9 @@ export type RejectReason =
   | 'not_host'
   | 'not_a_player'
   | 'not_enough_players'
-  | 'invalid_settings';
+  | 'invalid_settings'
+  | 'not_in_duel'
+  | 'stale_duel';
 
 export interface Rejection {
   playerId: string;
@@ -215,5 +224,125 @@ export interface ReduceResult {
   state: PrivateGameState;
   rejections: Rejection[];
   events: GameEvent[];
+  changed: boolean;
+}
+
+// ---------------------------------------------------------------------------------------------
+// v1.1 King of the hill — sessions of concurrent duels (docs/SRS_AMENDMENT_v1.1.md)
+//
+// A session owns the room roster and a list of duels. Every duel is a complete 1.0
+// `PrivateGameState` with exactly two players, run by the unchanged duel reducer (KH-5).
+// ---------------------------------------------------------------------------------------------
+
+export type SessionPhase = 'LOBBY' | 'IN_PROGRESS' | 'FINISHED' | 'ABANDONED';
+
+export type SessionStatus = 'waiting' | 'dueling' | 'hill_holder' | 'eliminated' | 'champion';
+
+export type SessionEliminationReason = 'lost' | 'draw' | 'forfeit';
+
+export interface SessionPlayer {
+  id: string;
+  nickname: string;
+  isHost: boolean;
+  connected: boolean;
+  disconnectedAt?: number;
+  /** Highest processed clientSeq (the ack, FIX 6) — tracked at session level across duels. */
+  lastSeq: number;
+  /** Seat order (join order); KH-1 demotes the most recent joiners first. */
+  joinedAt: number;
+  status: SessionStatus;
+  streak: number;
+  /** Current duel (dueling) or most recent duel (hill_holder / eliminated / champion). */
+  duelId?: string;
+  /** hill_holder only: host time at which the result beat ends (KH-9). */
+  availableAt?: number;
+  eliminatedAt?: number;
+  eliminationReason?: SessionEliminationReason;
+  /** Final placing (1 = champion); set on elimination / session end. Shared by simultaneous eliminations. */
+  rank?: number;
+}
+
+export interface PrivateDuel {
+  id: string; // "d{number}"
+  number: number; // room-wide counter; also the duel state's matchNumber (unique row / draft keys)
+  playerIds: [string, string];
+  state: PrivateGameState;
+}
+
+export interface PublicDuel {
+  id: string;
+  number: number;
+  playerIds: [string, string];
+  phase: Phase;
+  phaseEndsAt?: number;
+  overtimeUsed: boolean;
+  result?: GameResult;
+  playStartedAt?: number;
+  finishedAt?: number;
+  players: PublicPlayer[];
+  /** Only when this duel is FINISHED (FIX 1 rule, per duel). */
+  revealedSecrets?: Record<string, string>;
+}
+
+export interface SessionStanding {
+  playerId: string;
+  nickname: string;
+  rank: number;
+  streak: number;
+}
+
+export interface SessionResult {
+  outcome: 'champion' | 'draw' | 'abandoned';
+  championId?: string;
+  standings: SessionStanding[];
+}
+
+/** Session-level events (KH-*). Duel events are re-numbered into the session stream with a `duelId`. */
+export type SessionOnlyEvent =
+  | { id: number; type: 'SESSION_STARTED'; sessionNumber: number }
+  | { id: number; type: 'PAIRED'; duelId: string; playerIds: [string, string] }
+  | { id: number; type: 'WAITING'; playerId: string }
+  | { id: number; type: 'DUEL_FINISHED'; duelId: string; result: GameResult }
+  | { id: number; type: 'SESSION_ELIMINATED'; playerId: string; duelId?: string; reason: SessionEliminationReason }
+  | { id: number; type: 'SESSION_FINISHED'; result: SessionResult };
+
+export type RoomEvent = (GameEvent & { duelId?: string }) | SessionOnlyEvent;
+
+interface SessionStateBase {
+  roomCode: string;
+  version: number;
+  hostId: string;
+  phase: SessionPhase;
+  settings: GameSettings;
+  players: SessionPlayer[];
+  spectators: Spectator[];
+  /** Groups of player ids in elimination order; a group shares a rank (KH-8). */
+  eliminationOrder: string[][];
+  result?: SessionResult;
+  sessionNumber: number;
+  lastEvents: RoomEvent[];
+  startedAt?: number;
+  finishedAt?: number;
+  /** Id of the duel whose end finished the session (end screen shows it). */
+  finalDuelId?: string;
+}
+
+export interface PrivateSessionState extends SessionStateBase {
+  duels: PrivateDuel[];
+  /** Room-wide duel counter (never reset, so duel numbers are unique across sessions). */
+  duelCounter: number;
+  eventCounter: number;
+}
+
+export interface PublicSessionState extends SessionStateBase {
+  hostNow: number;
+  /** Active duels plus recently finished ones (see toPublicSession) — never an active secret. */
+  duels: PublicDuel[];
+}
+
+export interface SessionReduceResult {
+  state: PrivateSessionState;
+  rejections: Rejection[];
+  events: RoomEvent[];
   changed: boolean;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { isSpaceKey, isTextEntryTarget } from '@/lib/client/shortcuts';
 import { myPlayer, targetOf, useRoom } from '@/lib/client/store';
 import type { RoomClient } from '@/lib/client/roomClient';
 import { Board, type ActiveRow } from './Board';
@@ -10,17 +11,26 @@ import { fitStyle } from './fit';
 import { Keyboard } from './Keyboard';
 import { Banners, CountdownOverlay, OvertimeGod } from './Overlays';
 import { RoomHeader } from './RoomHeader';
+import { SessionCounts } from './SessionBits';
 import { useRoomClient } from './RoomContext';
 import { Timer } from './Timer';
 import { Toasts } from './Toasts';
 
-/** FR-3.1 / FR-4.2: physical keyboard — A–Z, Backspace, Enter, Esc (own mode), Tab (toggle). */
+/**
+ * FR-3.1 / FR-4.2 / FR-4.2a: physical keyboard — A–Z, Backspace, Enter, Esc (own mode),
+ * Tab and Space (toggle own ⇄ steal).
+ */
 function usePhysicalKeyboard(client: RoomClient) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (isTextEntryTarget(e.target as HTMLElement | null)) return;
+      if (isSpaceKey(e)) {
+        // Never scroll the page or press a focused button (FR-4.2a.3); holding Space is ignored.
+        e.preventDefault();
+        client.spaceToggle(e.repeat);
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         client.submit();
@@ -36,8 +46,16 @@ function usePhysicalKeyboard(client: RoomClient) {
         client.typeLetter(e.key);
       }
     };
+    // A focused <button> activates on Space *keyup* — swallow that too while a duel is on screen.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (isSpaceKey(e) && !isTextEntryTarget(e.target as HTMLElement | null)) e.preventDefault();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+    };
   }, [client]);
 }
 
@@ -100,11 +118,18 @@ export function GameView() {
     <div className="flex min-h-dvh flex-col">
       <RoomHeader
         center={
-          <div className="md:hidden">
-            <Timer size="sm" />
+          <div className="flex items-center gap-3">
+            <div className="md:hidden">
+              <Timer size="sm" />
+            </div>
+            <SessionCounts />
           </div>
         }
       />
+      {/* UI-13 / FR-4.2a.5: announce mode changes (Space, Tab, clicks) to screen readers. */}
+      <span className="sr-only" aria-live="polite" data-testid="mode-announcer">
+        {me.status === 'eliminated' ? '' : attacking ? `Steal mode — target ${target?.nickname ?? ''}` : 'Own word'}
+      </span>
       <main className="flex flex-1 flex-col items-center justify-between gap-3">
         <div
           className="flex w-full max-w-6xl items-start justify-center gap-1.5 px-1.5 sm:gap-4 sm:px-4 md:gap-8"
@@ -128,7 +153,7 @@ export function GameView() {
             >
               {attacking ? '⚔ Stealing' : 'My word'}
             </span>
-            <span className="max-w-[9rem] text-center text-[11px] text-muted">Tab switches mode · Esc returns</span>
+            <span className="max-w-[9rem] text-center text-[11px] text-muted">Space / Tab switches mode · Esc returns</span>
           </div>
           {target && (
             <Board

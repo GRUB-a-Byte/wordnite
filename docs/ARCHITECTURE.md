@@ -1,4 +1,4 @@
-# Word Royale — Architecture (release 1.0, 2-player duel)
+# Word Royale — Architecture (release 1.1: king-of-the-hill sessions of 1.0 duels)
 
 This document describes how the shipped code works. Requirements are in [SRS.md](SRS.md); where the
 implementation deviates from the SRS, the *Implementation addendum* at the end of the SRS explains why.
@@ -55,10 +55,13 @@ lives in a React component (FIX 2). Components call `RoomClient` methods and rea
 | `lib/engine/settings.ts` | `DEFAULT_SETTINGS`, `DEBUG_SETTINGS`, `validateSettings`, `resolveSettings` (FIX 3) |
 | `lib/engine/score.ts` | GR-16 two-pass tile scoring |
 | `lib/engine/secrets.ts` | GR-2 distinct secret selection (partial Fisher–Yates) |
-| `lib/engine/pairing.ts` | Who targets whom. 1.0 = "duel" pairing (FIX 2 extension point) |
+| `lib/engine/pairing.ts` | Who targets whom: duel pairing inside a duel, plus v1.1 `shuffleAndPair` / `pairAvailable` for sessions |
 | `lib/engine/outcome.ts` | Win/draw evaluation GR-26…29 and timeout outcomes GR-30/33 |
 | `lib/engine/reducer.ts` | `reduce(state, action, {now, rng, dictionary})` — the referee |
-| `lib/engine/project.ts` | `toPublicState()` whitelist projection plus the `findLeakedSecrets()` tripwire (FIX 1) |
+| `lib/engine/project.ts` | `toPublicState()` / `toPublicSession()` whitelist projections plus the `findLeakedSecrets()` / `findLeakedSessionSecrets()` tripwires (FIX 1) |
+| `lib/engine/session.ts` | v1.1 session referee: `reduceSession()` — pairing, waiting room, result beat, session eliminations, champion (§12) |
+| `lib/client/view.ts` | v1.1: which screen a viewer is on, and the 1.0-shaped "duel view" the components render |
+| `lib/client/shortcuts.ts` | FR-4.2a Spacebar rules (pure, unit-tested) |
 | `lib/realtime/transport.ts` | `RoomTransport` interface, outbound queue while offline, transport selection |
 | `lib/realtime/supabaseTransport.ts` / `localTransport.ts` | Supabase Realtime and dev-relay implementations |
 | `lib/realtime/protocol.ts` | Event names and payload types, plus runtime validation of untrusted payloads |
@@ -97,7 +100,7 @@ by `playerId`, with payload `{ playerId, nickname, role: host|player|spectator, 
 | Event | Direction | Payload | Notes |
 |---|---|---|---|
 | `action` | client → host | `ClientAction` | `START`, `GUESS`, `STEAL`, `REMATCH`, `RETURN_TO_LOBBY`, `UPDATE_SETTINGS`. Each carries `playerId` and a per-player increasing `clientSeq`. Shape-validated by `parseClientAction()`; unknown fields are dropped. |
-| `state` | host → all | `PublicGameState` | Sent after every change, re-sent every 3 s during a match (Broadcast is at-most-once), and on `sync_request`. |
+| `state` | host → all | `PublicSessionState` | Sent after every change, re-sent every 3 s during a session (Broadcast is at-most-once), and on `sync_request`. Carries every live duel (v1.1). |
 | `reject` | host → all | `{ playerId, clientSeq, reason }` | Clients filter by their own id. |
 | `draft` | player → all | `{ playerId, letters, mode, targetId, matchNumber }` | Live typing (GR-8). Throttled to ≤ 10/s, dropped while offline, never refereed. |
 | `sync_request` | client → host | `{ playerId }` | Sent on every (re)connect. Bursts are coalesced. |
@@ -269,14 +272,49 @@ stable ids. To grow beyond a duel:
 
 ## 11. Testing strategy
 
-- **Vitest (`npm test`, 114 tests):**
+- **Vitest (`npm test`, 160 tests):**
   - `lib/engine`: every GR rule and SRS edge case, plus amendments (ordering, sequence numbers, leakage,
     the early-finish toggle, determinism);
   - `lib/realtime`: `HostRunner` against an in-memory transport (FIFO, presence diffing, persistence,
     abandon, resync, hostile payloads) and protocol validation;
   - `lib/client`: copy, keyboard colouring, ids, nicknames.
-- **Playwright (`npm run test:e2e`):** real browsers through the local relay.
+- **Playwright (`npm run test:e2e`):** real browsers through the local relay. `king-of-the-hill.spec.ts`
+  covers a 3-player session and the Spacebar toggle (v1.1).
   - Two players and a spectator: mirroring (rows and live typing), invalid-word rejection, steal-row
     styling, a winning steal, both end screens, rematch.
   - A raw-WebSocket-frame secret-leak check.
   - Guest refresh, host refresh, and "Room not found".
+
+## 12. v1.1 King of the hill sessions
+
+Requirements: [SRS_AMENDMENT_v1.1.md](SRS_AMENDMENT_v1.1.md). Implementation notes are at the end of that document.
+
+```mermaid
+flowchart TB
+    subgraph Host["Host browser — HostRunner"]
+        RS["reduceSession()<br/>roster · pairing · waiting room<br/>result beats · champion"]
+        D1["duel d1<br/>1.0 reduce()"]
+        D2["duel d2<br/>1.0 reduce()"]
+        RS --> D1 & D2
+    end
+    RS -- "toPublicSession()" --> PUB[(PublicSessionState<br/>players · live duels · lastEvents)]
+    PUB --> V["client: selectView()<br/>→ lobby / duel / duel_result /<br/>waiting / watch / grid / finished"]
+    V --> UI["1.0 components on a duel view<br/>+ WaitingRoom · DuelResult · GridView"]
+```
+
+- **Layering.** The session layer sits on top of the 1.0 duel reducer. Each duel is a full 2-player `PrivateGameState`, and `reduceSession()` passes actions, presence changes and deadlines into it unchanged.
+  - The duel's rules, outcome evaluation, scoring and projection are 1.0 code.
+  - The session reads only two things from a duel: when its next deadline is (`nextDeadline`), and how it ended (`result`).
+- **Clock.** Before any action, `reduceSession()` applies every due deadline across **all** duels, every result-beat expiry, and every waiting-room forfeit, strictly in time order. It also runs once more after the action, which handles a zero-length beat. This extends FIX 6 to many duels.
+- **Identity across duels.** Connection state and the action ack (`lastSeq`) live on the session player.
+  - Before a GUESS or STEAL is routed into a duel, the duel player's `lastSeq` is lined up with the session's, so the duel's own replay check stays consistent.
+  - Actions carry `duelId`. A mismatch is rejected `stale_duel`.
+- **Client views.** `selectView()` turns the session snapshot plus the viewer id into a screen and a 1.0-shaped `PublicGameState` for the duel on screen.
+  - The store keeps both `session` and `game`, so every 1.0 component keeps reading `game`.
+  - The view is recomputed on every snapshot and by the 500 ms watchdog, because a knocked-out player's result card expires on the clock.
+- **Invariants** (checked after every transition in the unit tests, including a randomised property test):
+  - pairs are symmetric;
+  - each player is in at most one live duel;
+  - the waiting room holds at most one player;
+  - every `dueling` player is in a live duel;
+  - every session ends with exactly one champion or a draw.

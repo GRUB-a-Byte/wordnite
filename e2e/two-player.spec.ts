@@ -36,12 +36,15 @@ async function typeWord(page: Page, word: string) {
 
 async function readSecrets(host: Page): Promise<Secrets> {
   return host.evaluate(() => {
-    const h = (window as unknown as { __WR_HOST__: { privateState: { hostId: string; players: { id: string; secret: string }[] } } })
-      .__WR_HOST__;
+    const h = (
+      window as unknown as {
+        __WR_HOST__: { privateState: { hostId: string; players: { id: string }[] }; secretsByPlayer(): Record<string, string> };
+      }
+    ).__WR_HOST__;
     const s = h.privateState;
-    const hostP = s.players.find((p) => p.id === s.hostId)!;
-    const guestP = s.players.find((p) => p.id !== s.hostId)!;
-    return { hostId: hostP.id, guestId: guestP.id, hostSecret: hostP.secret, guestSecret: guestP.secret };
+    const secrets = h.secretsByPlayer();
+    const guestId = s.players.find((p) => p.id !== s.hostId)!.id;
+    return { hostId: s.hostId, guestId, hostSecret: secrets[s.hostId]!, guestSecret: secrets[guestId]! };
   });
 }
 

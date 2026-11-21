@@ -459,3 +459,47 @@ export interface SessionResult {
 | A-13 | The odd player out at START is chosen at random. | The host plays first, or the last joiner waits. |
 | A-14 | Losers default to spectating rather than leaving. | Send losers back to the home page. |
 | A-15 | Space is ignored, not converted to "submit" or anything else, outside `PLAYING` / `OVERTIME`. | Space also dismisses interstitials. |
+
+---
+
+## Implementation notes (v1.1 build, 2026-11-21)
+
+> Added during implementation. Where an item below conflicts with the text above, **this section
+> takes precedence**. Architecture details: [ARCHITECTURE.md §12](ARCHITECTURE.md#12-v11-king-of-the-hill-sessions).
+
+### I.1 Decisions taken while building
+
+| Item | Decision | Why |
+|---|---|---|
+| KH-9 result beat (A-11) | **6 s** default (`resultBeatMs`), 4 s with `?debug=1`. The host can't change it in the UI. | The client keeps the final board on screen for 2.2 s (steal shatter, FR-4.6) before the result card appears. A 3 s beat would leave under a second to read the card. |
+| §7 data model | Session state (`status`, `streak`, `duelId`, `rank`) lives on a separate `SessionPlayer` record. `PublicPlayer` only gains an optional `streak`. Each duel is a complete 1.0 `PrivateGameState`. | The 1.0 duel reducer runs **unchanged** inside every duel (KH-5). Clients rebuild a 1.0-shaped "duel view", so the 1.0 boards, timer and overlays are reused as they are. |
+| KH-14 | With 2 players, START pairs host-first and makes **no RNG draw**. Inside a duel, players are always in seat (join) order. | This gives exact 1.0 equivalence. A unit test replays the same scripts through both reducers and compares the results. |
+| KH-10 pairing priority | The waiting player is paired first, then hill-holders in the order their beats ended. | This is a fair queue and keeps the waiting room at ≤ 1 by construction. |
+| KH-10c timing | The champion is crowned **as soon as** the deciding duel ends, without waiting for the beat. | The session end screen already shows the final duel, so a beat would only add delay. |
+| KH-8 ranks | Competition ranking: players knocked out earlier rank lower, and only players eliminated together (a draw) share a rank. | "Reverse elimination order" taken literally. |
+| KH-11 host | The host is never forfeited from the waiting room. GR-36 (host gone → abandon) covers the host instead. | The host is the referee. Forfeiting them would end the session silently. |
+| KH-13 | New session drops disconnected players and seats queued would-be players up to the cap. It is validated first and rejected with no side effects if fewer than 2 would remain. The button reads **Rematch** in 2-player rooms and **New session** in larger ones. | 1.0 UI and copy are unchanged for duels. |
+| Snapshot size (§8) | A finished duel stays in snapshots for `resultBeatMs + 2.2 s + 1 s`, then drops out. The final duel always stays. Abandoned duels are never broadcast. | Keeps a 16-player snapshot under 32 KB (asserted by a unit test). |
+| Events | Duel events are renumbered into one session event stream and tagged with `duelId`. Duel numbers are unique across the whole room, so row ids and draft keys can't collide between duels. Clients play only the overlays for the duel they are looking at. | Without this, another duel's overtime or "STOLEN!" overlay would fire on your screen. |
+| FR-8.2 banner | "New challenger: {name}" appears only when a streak is on the line, so it never appears at the start of a plain 1v1. | KH-14. |
+| FR-7.1 | Exactly one live duel → the 1.0 large spectator view (which also gives the final duel full-screen). Two or more → the grid, with the closest race highlighted. | Matches the projector use case. |
+| FR-4.2a | Space is also swallowed on **keyup**, because a focused button activates on keyup. The "Space ⇄" hint only shows on fine-pointer (mouse) devices. Space is silent when shielded. With an ineligible target it shows the same hint toast as Tab. | Required for the "never activates a focused button" rule. |
+| Host restore | A host `sessionStorage` snapshot from 1.0 (no `duels`) is discarded on reload, not misread. | Safe upgrade. |
+| FR-2.5 / NFR-10 | The sixth "How to play" bullet only appears when the cap is above 2. | 1.0 lobby unchanged. |
+
+### I.2 Verification
+
+- **Vitest:** 160 tests, up from 114.
+  - New suites: `session.test.ts` (KH-1…KH-14, E-21…E-31, a randomised 60-session property test of the invariants, secret-leak checks, the 16-player size budget) and `view.test.ts` (screen selection, overlay scoping, the Space rules).
+  - A 3-player `HostRunner` test.
+  - All 1.0 engine tests still pass against the unchanged duel reducer.
+- **Playwright** (local relay): the four 1.0 two-player tests pass unchanged. A new `king-of-the-hill.spec.ts` covers:
+  - cap → 3, the waiting room, the two-board-only check;
+  - Space toggling both ways with the draft kept and no scroll;
+  - steal → Victory / Knocked out cards → re-pairing after the beat;
+  - Champion / "Knocked out — 2nd" / standings, and New session.
+
+### I.3 Not done / not verified
+
+- **AC-5 / AC-6:** an 8+-player session on real devices, and Supabase Realtime quotas for 16 players. Both still need a live run. All automated multiplayer tests use the local relay.
+- **AC-7:** a keyboard-only full duel is covered by the e2e Space test, but hasn't been tried by a person.

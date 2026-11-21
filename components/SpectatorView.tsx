@@ -8,6 +8,7 @@ import { DebugPanel } from './DebugPanel';
 import { fitStyle } from './fit';
 import { Banners, CountdownOverlay, OvertimeGod } from './Overlays';
 import { RoomHeader } from './RoomHeader';
+import { SessionCounts } from './SessionBits';
 import { Timer } from './Timer';
 import { Toasts } from './Toasts';
 
@@ -29,7 +30,14 @@ export function SpectatorView() {
   const [left, right] = game.players;
   return (
     <div className="flex min-h-dvh flex-col">
-      <RoomHeader center={<span className="text-xs font-bold tracking-widest text-muted uppercase">Spectating</span>} />
+      <RoomHeader
+        center={
+          <span className="flex items-center gap-3">
+            <span className="text-xs font-bold tracking-widest text-muted uppercase">Spectating</span>
+            <SessionCounts />
+          </span>
+        }
+      />
       <main className="flex flex-1 flex-col items-center gap-4 px-2 pb-6">
         <Timer size="lg" />
         <div className="flex w-full items-start justify-center gap-3 sm:gap-10" style={fitStyle(game, '--chrome-spectator')}>

@@ -159,6 +159,26 @@ function resolveOutcome(tx: Tx, at: number): void {
 
 type Due = { at: number; kind: 'phase' } | { at: number; kind: 'forfeit'; playerId: string };
 
+/**
+ * Earliest pending deadline of an active match (phase end or a disconnect forfeit), or undefined.
+ * Used by the session layer to interleave several duels' clocks chronologically (v1.1).
+ */
+export function nextDeadline(s: PrivateGameState): number | undefined {
+  return nextDue(s, Number.POSITIVE_INFINITY)?.at;
+}
+
+/**
+ * Starts a match on a prepared 2-player state, bypassing the lobby checks (v1.1 session layer:
+ * the session decides who duels). Same effects as START — GR-2 secrets, GR-3 reset, GR-4 countdown.
+ */
+export function beginMatch(state: PrivateGameState, ctx: EngineContext): ReduceResult {
+  const tx: Tx = { s: structuredClone(state), ctx, events: [], rejections: [], changed: false };
+  startMatch(tx);
+  tx.s.version += 1;
+  tx.s.lastEvents = tx.events;
+  return { state: tx.s, rejections: [], events: tx.events, changed: true };
+}
+
 function nextDue(s: PrivateGameState, now: number): Due | null {
   if (!isActivePhase(s.phase)) return null;
   let best: Due | null = null;
@@ -328,6 +348,7 @@ function handleClientAction(tx: Tx, action: ClientAction): void {
     case 'START':
       return handleStart(tx, action, actor);
     case 'REMATCH':
+    case 'NEW_SESSION':
       return handleRematch(tx, action, actor);
     case 'RETURN_TO_LOBBY':
       return handleReturnToLobby(tx, action, actor);
@@ -439,7 +460,11 @@ function handleStart(tx: Tx, action: Extract<ClientAction, { type: 'START' }>, p
   startMatch(tx);
 }
 
-function handleRematch(tx: Tx, action: Extract<ClientAction, { type: 'REMATCH' }>, p: PrivatePlayer): void {
+function handleRematch(
+  tx: Tx,
+  action: Extract<ClientAction, { type: 'REMATCH' | 'NEW_SESSION' }>,
+  p: PrivatePlayer,
+): void {
   if (p.id !== tx.s.hostId) return reject(tx, action, 'not_host');
   if (tx.s.phase !== 'FINISHED') return reject(tx, action, 'not_playing');
   if (!canStartMatch(tx.s)) return reject(tx, action, 'not_enough_players');

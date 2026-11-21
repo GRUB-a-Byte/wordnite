@@ -1,4 +1,4 @@
-import type { ClientAction, GameSettings, PresenceRole, PublicGameState, Rejection } from '@/lib/engine/types';
+import type { ClientAction, GameSettings, PresenceRole, PublicSessionState, Rejection } from '@/lib/engine/types';
 
 /**
  * Wire protocol over the `room:{CODE}` channel (SRS §8.3, amended by FIX 1).
@@ -6,7 +6,7 @@ import type { ClientAction, GameSettings, PresenceRole, PublicGameState, Rejecti
  * | event          | direction      | payload                                   |
  * |----------------|----------------|-------------------------------------------|
  * | `action`       | client → host  | ClientAction                              |
- * | `state`        | host → all     | PublicGameState (never contains secrets)  |
+ * | `state`        | host → all     | PublicSessionState (never active secrets) |
  * | `reject`       | host → all     | Rejection (clients filter by playerId)    |
  * | `draft`        | player → all   | DraftPayload (ephemeral, not refereed)    |
  * | `sync_request` | client → host  | { playerId }                              |
@@ -16,12 +16,14 @@ export interface DraftPayload {
   letters: string;
   mode: 'own' | 'steal';
   targetId?: string;
+  /** Duel number — drafts are only rendered inside the duel they were typed in. */
   matchNumber: number;
+  duelId?: string;
 }
 
 export interface EventPayloads {
   action: ClientAction;
-  state: PublicGameState;
+  state: PublicSessionState;
   reject: Rejection;
   draft: DraftPayload;
   sync_request: { playerId: string };
@@ -61,6 +63,7 @@ const SETTINGS_KEYS: readonly (keyof GameSettings)[] = [
   'hostGraceMs',
   'maxPlayers',
   'enableUnbeatableEarlyFinish',
+  'resultBeatMs',
 ];
 
 export function parseClientAction(raw: unknown): ClientAction | null {
@@ -68,15 +71,23 @@ export function parseClientAction(raw: unknown): ClientAction | null {
   const base = { playerId: raw.playerId, clientSeq: raw.clientSeq };
   switch (raw.type) {
     case 'START':
-    case 'REMATCH':
+    case 'NEW_SESSION':
     case 'RETURN_TO_LOBBY':
       return { type: raw.type, ...base };
-    case 'GUESS':
-      return isWord(raw.word) ? { type: 'GUESS', ...base, word: raw.word } : null;
-    case 'STEAL':
-      return isWord(raw.word) && isId(raw.targetId)
-        ? { type: 'STEAL', ...base, word: raw.word, targetId: raw.targetId }
-        : null;
+    case 'REMATCH':
+      return { type: 'NEW_SESSION', ...base }; // KH-13: 1.0 clients' Rematch is a New session
+    case 'GUESS': {
+      if (!isWord(raw.word)) return null;
+      const a: ClientAction = { type: 'GUESS', ...base, word: raw.word };
+      if (isId(raw.duelId)) a.duelId = raw.duelId;
+      return a;
+    }
+    case 'STEAL': {
+      if (!isWord(raw.word) || !isId(raw.targetId)) return null;
+      const a: ClientAction = { type: 'STEAL', ...base, word: raw.word, targetId: raw.targetId };
+      if (isId(raw.duelId)) a.duelId = raw.duelId;
+      return a;
+    }
     case 'UPDATE_SETTINGS': {
       if (!isObj(raw.patch)) return null;
       const patch: Partial<GameSettings> = {};
@@ -111,17 +122,20 @@ export function parseDraft(raw: unknown): DraftPayload | null {
     mode: raw.mode === 'steal' ? 'steal' : 'own',
     targetId: isId(raw.targetId) ? raw.targetId : undefined,
     matchNumber: typeof raw.matchNumber === 'number' ? raw.matchNumber : 0,
+    duelId: isId(raw.duelId) ? raw.duelId : undefined,
   };
 }
 
-export function looksLikePublicState(raw: unknown): raw is PublicGameState {
+export function looksLikePublicSession(raw: unknown): raw is PublicSessionState {
   return (
     isObj(raw) &&
     typeof raw.version === 'number' &&
     typeof raw.roomCode === 'string' &&
     typeof raw.hostId === 'string' &&
     typeof raw.phase === 'string' &&
-    Array.isArray(raw.players)
+    Array.isArray(raw.players) &&
+    Array.isArray(raw.duels) &&
+    Array.isArray(raw.lastEvents)
   );
 }
 

@@ -13,6 +13,10 @@ The extension points referenced below are described in
 
 Goal: many players start in 1v1 duels, and the competition narrows until a final 1v1.
 
+> **v1.1 shipped one form of this:** a king-of-the-hill session ([SRS_AMENDMENT_v1.1.md](SRS_AMENDMENT_v1.1.md)).
+> Random symmetric duels, winners stay on, losers are out, last one standing is champion. The rows
+> below are the remaining alternatives: brackets, a free-for-all variant, and matchmaking.
+
 | Piece | Sketch | Builds on |
 |---|---|---|
 | Knockout rounds | Pair everyone into duels. Winners advance; draws need a tie-break rule (decide: replay, fewer rows, or coin flip). | A `tournament` module above the existing duel reducer. Each duel stays a normal `PrivateGameState`. |

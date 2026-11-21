@@ -17,7 +17,7 @@ interface BoardProps {
   player: PublicPlayer;
   game: PublicGameState;
   viewer: 'me' | 'opponent' | 'spectator';
-  variant: 'mine' | 'opp' | 'large' | 'end';
+  variant: 'mine' | 'opp' | 'large' | 'end' | 'mini';
   /** What to show in the row currently being typed (draft / pending / mirrored draft). */
   active?: ActiveRow | null;
   /** This board is the current steal target (FR-4.1 crosshair glow). */
@@ -85,7 +85,15 @@ export function Board({
   const attacked = useLatestFx('STEAL_MISS', (e) => e.targetId === player.id);
 
   const sizeClass =
-    variant === 'opp' ? 'board-opp' : variant === 'large' ? 'board-large' : variant === 'end' ? 'board-end' : 'board-mine';
+    variant === 'opp'
+      ? 'board-opp'
+      : variant === 'large'
+        ? 'board-large'
+        : variant === 'end'
+          ? 'board-end'
+          : variant === 'mini'
+            ? 'board-mini'
+            : 'board-mine';
 
   const interactive = !!onActivate;
 
@@ -133,6 +141,15 @@ export function Board({
             {viewer === 'me' ? 'YOU · ' : ''}
             {player.nickname}
           </span>
+          {(player.streak ?? 0) > 0 && (
+            <span
+              className="rounded bg-shield/20 px-1 text-[10px] font-black text-shield sm:text-xs"
+              title={`${player.streak} duel${player.streak === 1 ? '' : 's'} won this session`}
+              data-testid="streak"
+            >
+              👑{player.streak}
+            </span>
+          )}
           {!player.connected && (
             <span className="rounded bg-steal/20 px-1 text-[10px] font-bold text-steal uppercase">offline</span>
           )}

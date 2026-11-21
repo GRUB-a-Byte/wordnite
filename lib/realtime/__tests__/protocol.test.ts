@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikePublicState, parseClientAction, parseDraft, parsePresenceMeta } from '../protocol';
+import { looksLikePublicSession, parseClientAction, parseDraft, parsePresenceMeta } from '../protocol';
 
 describe('wire protocol validation', () => {
   it('accepts well-formed client actions', () => {
@@ -68,7 +68,30 @@ describe('wire protocol validation', () => {
   });
 
   it('recognises public state snapshots', () => {
-    expect(looksLikePublicState({ version: 1, roomCode: 'ABCD', hostId: 'h', phase: 'LOBBY', players: [] })).toBe(true);
-    expect(looksLikePublicState({ version: '1' })).toBe(false);
+    expect(
+      looksLikePublicSession({ version: 1, roomCode: 'ABCD', hostId: 'h', phase: 'LOBBY', players: [], duels: [], lastEvents: [] }),
+    ).toBe(true);
+    // A 1.0-shaped snapshot (no duels) is not accepted.
+    expect(looksLikePublicSession({ version: 1, roomCode: 'ABCD', hostId: 'h', phase: 'LOBBY', players: [] })).toBe(false);
+    expect(looksLikePublicSession({ version: '1' })).toBe(false);
+  });
+
+  it('v1.1: GUESS / STEAL carry an optional duelId; REMATCH maps to NEW_SESSION', () => {
+    expect(parseClientAction({ type: 'GUESS', playerId: 'p1', clientSeq: 3, word: 'CRANE', duelId: 'd4' })).toEqual({
+      type: 'GUESS',
+      playerId: 'p1',
+      clientSeq: 3,
+      word: 'CRANE',
+      duelId: 'd4',
+    });
+    expect(parseClientAction({ type: 'STEAL', playerId: 'p1', clientSeq: 3, word: 'CRANE', targetId: 'p2', duelId: 7 })).not.toHaveProperty(
+      'duelId',
+    );
+    expect(parseClientAction({ type: 'REMATCH', playerId: 'p1', clientSeq: 2 })).toEqual({
+      type: 'NEW_SESSION',
+      playerId: 'p1',
+      clientSeq: 2,
+    });
+    expect(parseDraft({ playerId: 'p1', letters: 'ab', matchNumber: 3, duelId: 'd3' })).toMatchObject({ duelId: 'd3' });
   });
 });

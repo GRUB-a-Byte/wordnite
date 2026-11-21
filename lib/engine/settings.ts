@@ -16,6 +16,9 @@ export const DEFAULT_SETTINGS: Readonly<GameSettings> = Object.freeze({
   hostGraceMs: 10_000,
   maxPlayers: 2,
   enableUnbeatableEarlyFinish: true,
+  // KH-9 result beat. The amendment suggested 3 s, but the client holds the final board for 2.2 s
+  // (steal shatter, FR-4.6) before the result card appears, so 6 s leaves ~4 s to read it.
+  resultBeatMs: 6_000,
 });
 
 /** `?debug=1` settings (SRS §11.3): 20 s match / 10 s overtime for dry runs. */
@@ -23,6 +26,7 @@ export const DEBUG_SETTINGS: Readonly<GameSettings> = Object.freeze({
   ...DEFAULT_SETTINGS,
   matchMs: 20_000,
   overtimeMs: 10_000,
+  resultBeatMs: 4_000,
 });
 
 interface IntRule {
@@ -42,8 +46,9 @@ const INT_RULES: Record<Exclude<keyof GameSettings, 'enableUnbeatableEarlyFinish
   overtimeMs: { min: 5_000, max: 10 * 60_000 },
   guestGraceMs: { min: 1_000, max: 120_000 },
   hostGraceMs: { min: 1_000, max: 120_000 },
-  // Release 1.0 is a 2-player duel. The engine is written over player arrays so this can grow later.
-  maxPlayers: { min: 2, max: 2, why: 'release 1.0 supports exactly two players' },
+  // KH-1 (v1.1): host-set player cap. 16 keeps Realtime traffic within the demo budget (A-9).
+  maxPlayers: { min: 2, max: 16, why: 'a room holds 2 to 16 players' },
+  resultBeatMs: { min: 0, max: 30_000 },
 };
 
 export class InvalidSettingsError extends Error {
