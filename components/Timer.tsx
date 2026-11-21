@@ -1,7 +1,6 @@
 'use client';
 
-import { useRoom } from '@/lib/client/store';
-import { formatClock, usePhaseRemaining } from './hooks';
+import { formatClock, useClock } from './hooks';
 
 const SIZE = {
   // sm sits inside the phone header: one line, OVERTIME label inline so the header never grows.
@@ -10,10 +9,12 @@ const SIZE = {
   lg: { box: 'min-h-[clamp(34px,7.5vmin,112px)] flex-col', text: 'text-[clamp(30px,7vmin,104px)]', pill: 'mb-1 text-[clamp(10px,1.6vmin,16px)] px-2' },
 } as const;
 
-/** FR-5.1: m:ss, red under 0:20, pulsing under 0:10, "OVERTIME" label during overtime. */
-export function Timer({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
-  const phase = useRoom((s) => s.game?.phase);
-  const remaining = usePhaseRemaining();
+/**
+ * FR-5.1: m:ss, red under 0:20, pulsing under 0:10, "OVERTIME" label during overtime.
+ * v1.1 FD-7: in a battle royale it shows `playerId`'s own duel clock (nothing while waiting).
+ */
+export function Timer({ size = 'md', playerId }: { size?: 'sm' | 'md' | 'lg'; playerId?: string }) {
+  const { phase, remaining } = useClock(200, playerId);
   const s = SIZE[size];
   if (!phase || remaining === null || (phase !== 'PLAYING' && phase !== 'OVERTIME')) {
     return <div className={`flex ${s.box}`} />;

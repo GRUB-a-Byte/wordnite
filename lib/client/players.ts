@@ -21,3 +21,25 @@ export function arenaCounts(players: readonly PublicPlayer[]): { alive: number; 
   }
   return { alive, shielded, out: players.length - alive - shielded };
 }
+
+/**
+ * v1.1 WR-5: who is still in the battle, grouped by duel ("A vs B"), plus the players waiting for an
+ * opponent. Each duel is listed once, in join order of its first player.
+ */
+export function matchups<P extends PublicPlayer>(players: readonly P[]): { duels: [P, P][]; waiting: P[] } {
+  const duels: [P, P][] = [];
+  const waiting: P[] = [];
+  const seen = new Set<string>();
+  for (const p of players) {
+    if (p.status === 'eliminated' || seen.has(p.id)) continue;
+    const o = findPlayer(players, p.targetId);
+    if (o && o.status !== 'eliminated' && o.targetId === p.id) {
+      duels.push([p, o]);
+      seen.add(p.id).add(o.id);
+    } else {
+      waiting.push(p);
+      seen.add(p.id);
+    }
+  }
+  return { duels, waiting };
+}

@@ -36,8 +36,8 @@ export function SpectatorView() {
     return (
       <div className="flex h-dvh flex-col overflow-hidden">
         <RoomHeader center={<span className="text-xs font-bold tracking-widest text-muted uppercase">Spectating</span>} />
+        {/* v1.1 FD-7: no match clock — every duel shows its own clock on its boards. */}
         <div className="flex shrink-0 flex-col items-center px-2">
-          <Timer size="lg" />
           <ArenaBar />
           <StatusLine />
         </div>

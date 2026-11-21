@@ -64,6 +64,9 @@ export function toPublicPlayer(p: PrivatePlayer): PublicPlayer {
     eliminationReason: p.eliminationReason,
     targetId: p.targetId,
     lastSeq: p.lastSeq,
+    duelPhase: p.duelPhase,
+    duelEndsAt: p.duelEndsAt,
+    duelOvertimeUsed: p.duelOvertimeUsed,
   };
 }
 

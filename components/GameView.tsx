@@ -2,7 +2,8 @@
 
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { isBattleRoyale } from '@/lib/engine/state';
+import { isBattleRoyale, isWaiting } from '@/lib/engine/state';
+import { isSpaceKey, isTextEntryTarget } from '@/lib/client/clock';
 import { findPlayer } from '@/lib/client/players';
 import { myPlayer, targetOf, useRoom } from '@/lib/client/store';
 import type { RoomClient } from '@/lib/client/roomClient';
@@ -16,14 +17,22 @@ import { RoomHeader } from './RoomHeader';
 import { useRoomClient } from './RoomContext';
 import { Timer } from './Timer';
 import { Toasts } from './Toasts';
+import { WaitingRoom } from './WaitingRoom';
 
-/** FR-3.1 / FR-4.2: physical keyboard — A–Z, Backspace, Enter, Esc (own mode), Tab (toggle). */
+/**
+ * FR-3.1 / FR-4.2 / FR-4.2a: physical keyboard — A–Z, Backspace, Enter, Esc (own mode), Tab and
+ * Space (toggle own ⇄ steal). While waiting (v1.1 WR-2) RoomClient ignores every one of them.
+ */
 function usePhysicalKeyboard(client: RoomClient) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (isTextEntryTarget(e.target as HTMLElement | null)) return;
+      if (isSpaceKey(e)) {
+        e.preventDefault(); // never scroll the page or press a focused button (FR-4.2a.3)
+        client.spaceToggle(e.repeat);
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         client.submit();
@@ -39,8 +48,16 @@ function usePhysicalKeyboard(client: RoomClient) {
         client.typeLetter(e.key);
       }
     };
+    // Browsers press a focused button on Space KEYUP — swallow that too while the game is on screen.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (isSpaceKey(e) && !isTextEntryTarget(e.target as HTMLElement | null)) e.preventDefault();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+    };
   }, [client]);
 }
 
@@ -77,6 +94,8 @@ export function GameView() {
   const target = useRoom((s) => targetOf(s));
   const oppDraft = useOpponentDraft(target?.id);
   if (!game || !me) return null;
+  // v1.1 WR-5: no opponent → the waiting room (no board, no keyboard, no timer).
+  if (isBattleRoyale(game.players.length) && isWaiting(me, game.phase)) return <WaitingRoom />;
 
   const attacking = me.status === 'invulnerable' || mode === 'steal';
   const stealBlocked = client.stealBlockReason();
@@ -89,20 +108,18 @@ export function GameView() {
   let hint: React.ReactNode = null;
   const royale = isBattleRoyale(game.players.length);
   if (me.status === 'eliminated') hint = royale ? 'You’re out — watching the rest of the battle' : 'You’re out — watch the finish';
-  else if (royale && !target)
-    hint = me.status === 'alive' ? '⏳ Waiting for a free opponent — keep solving your word' : '🛡 You’re safe — no opponent left to attack';
   else if (me.status === 'invulnerable' && me.postSolveStealRows === 0) hint = 'Out of ammo — you’re shielded, sit tight';
   else if (target?.status === 'invulnerable') hint = `🛡 ${target.nickname} is shielded — keep solving your own word`;
   else if (stealBlocked && attacking) hint = stealBlocked;
-  else if (attacking && target) hint = `⚔ Steal mode — type ${target.nickname}’s word · Esc to go back`;
-  else if (target && !stealBlocked) hint = `Guess your word · tap ${target.nickname}’s board (or Tab) to steal`;
+  else if (attacking && target) hint = `⚔ Steal mode — type ${target.nickname}’s word · Space or Esc to go back`;
+  else if (target && !stealBlocked) hint = `Guess your word · tap ${target.nickname}’s board (or Space / Tab) to steal`;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <RoomHeader
         center={
           <div className="only-compact">
-            <Timer size="sm" />
+            <Timer size="sm" playerId={me.id} />
           </div>
         }
       />
@@ -118,7 +135,7 @@ export function GameView() {
               onActivate={me.status === 'alive' ? () => client.setMode('own') : undefined}
             />
             <div className="only-wide center-col flex-col items-center gap-3 self-center">
-              <Timer size="md" />
+              <Timer size="md" playerId={me.id} />
               <span
                 className={`rounded-full px-3 py-1 text-xs font-black tracking-widest whitespace-nowrap uppercase ${
                   attacking ? 'bg-steal text-on-accent' : 'bg-correct text-on-accent'
@@ -162,8 +179,12 @@ export function GameView() {
           <Keyboard />
         </div>
       </main>
-      <CountdownOverlay />
-      <OvertimeGod />
+      {/* UI-13 / FR-4.2a.7: announce mode changes (Space, Tab, clicks) to screen readers. */}
+      <span className="sr-only" aria-live="polite" data-testid="mode-announcer">
+        {me.status === 'eliminated' ? '' : attacking ? `Steal mode — target ${target?.nickname ?? ''}` : 'Own word'}
+      </span>
+      <CountdownOverlay viewerId={me.id} />
+      <OvertimeGod viewerId={me.id} />
       <DebugPanel />
     </div>
   );

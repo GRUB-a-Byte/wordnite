@@ -3,16 +3,40 @@
 import { rankSolvers } from '@/lib/engine/outcome';
 import type { PublicGameState, PublicPlayer } from '@/lib/engine/types';
 import { ARENA_GAP, MINI_HEADER, MINI_PAD, MINI_TILE_GAP, bestGrid } from '@/lib/client/arenaLayout';
+import { clockOf } from '@/lib/client/clock';
 import { nicknameOf } from '@/lib/client/players';
-import { useElementSize } from './hooks';
+import { useRoom } from '@/lib/client/store';
+import { formatClock, useElementSize, useNow } from './hooks';
 
-function MiniBoard({ p, tile, leader, nameOf }: { p: PublicPlayer; tile: number; leader: boolean; nameOf: (id?: string) => string }) {
+/** v1.1 FD-7: a duel's own clock on its two mini boards ("3…", "1:42", "OT 0:31", "⏳" waiting). */
+function duelClockText(game: PublicGameState, p: PublicPlayer, hostNow: number): string | null {
+  if (p.status === 'eliminated') return null;
+  const c = clockOf(game, p);
+  if (!c.phase || c.endsAt === undefined) return game.phase === 'PLAYING' ? '⏳' : null;
+  const left = Math.max(0, c.endsAt - hostNow);
+  if (c.phase === 'COUNTDOWN') return `${Math.max(1, Math.ceil(left / 1000))}…`;
+  return `${c.phase === 'OVERTIME' ? 'OT ' : ''}${formatClock(left)}`;
+}
+
+function MiniBoard({
+  p,
+  tile,
+  leader,
+  nameOf,
+  clock,
+}: {
+  p: PublicPlayer;
+  tile: number;
+  leader: boolean;
+  nameOf: (id?: string) => string;
+  clock: string | null;
+}) {
   const scoring = p.rows.filter((r) => r.scoring);
   const letters = tile >= 18;
   const gap = Math.max(1, Math.round(tile * MINI_TILE_GAP));
   const status =
     p.status === 'eliminated'
-      ? `out${p.eliminationReason === 'stolen' ? ` — stolen by ${nameOf(p.eliminatedBy)}` : ''}`
+      ? `out${p.eliminationReason === 'stolen' ? ` — stolen by ${nameOf(p.eliminatedBy)}` : p.eliminationReason === 'outscored' ? ' — out-scored' : p.eliminationReason === 'duel_draw' ? ' — duel drawn' : ''}`
       : p.status === 'invulnerable'
         ? `shielded, solved in ${p.solvedInRows}`
         : 'alive';
@@ -28,6 +52,11 @@ function MiniBoard({ p, tile, leader, nameOf }: { p: PublicPlayer; tile: number;
       <div className="flex w-full items-center gap-1 overflow-hidden text-[11px] leading-[18px] font-bold" style={{ height: MINI_HEADER }}>
         <span className="shrink-0">{leader ? '👑' : p.status === 'eliminated' ? '✖' : p.status === 'invulnerable' ? '🛡' : ''}</span>
         <span className="min-w-0 flex-1 truncate">{p.nickname}</span>
+        {clock && (
+          <span className="shrink-0 text-steal-ink tabular-nums" data-testid="duel-clock">
+            {clock}
+          </span>
+        )}
         <span className="shrink-0 text-muted tabular-nums">
           {p.solvedInRows ?? p.rowsUsed}/{p.rowLimit}
         </span>
@@ -66,6 +95,9 @@ function MiniBoard({ p, tile, leader, nameOf }: { p: PublicPlayer; tile: number;
  */
 export function ArenaGrid({ game }: { game: PublicGameState }) {
   const [ref, size] = useElementSize<HTMLDivElement>();
+  const offset = useRoom((s) => s.clockOffset);
+  const now = useNow(500);
+  const hostNow = now + offset;
   const players = game.players;
   const rows = Math.max(...players.map((p) => p.rowLimit));
   const { cols, tile } = bestGrid(players.length, size.w, size.h, rows);
@@ -79,7 +111,14 @@ export function ArenaGrid({ game }: { game: PublicGameState }) {
           style={{ gridTemplateColumns: `repeat(${cols}, max-content)`, gap: ARENA_GAP }}
         >
           {players.map((p) => (
-            <MiniBoard key={p.id} p={p} tile={tile} leader={p.id === leader} nameOf={nameOf} />
+            <MiniBoard
+              key={p.id}
+              p={p}
+              tile={tile}
+              leader={p.id === leader}
+              nameOf={nameOf}
+              clock={now === 0 ? null : duelClockText(game, p, hostNow)}
+            />
           ))}
         </div>
       )}

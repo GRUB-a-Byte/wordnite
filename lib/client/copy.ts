@@ -19,6 +19,7 @@ export const REJECT_TEXT: Record<RejectReason, string> = {
   not_a_player: 'You’re spectating',
   not_enough_players: 'Need 2 connected players',
   invalid_settings: 'Invalid settings',
+  waiting_for_opponent: 'Waiting for an opponent',
 };
 
 /** FR-6.1 outcome reasons (short headline form). */
@@ -33,6 +34,8 @@ export const REASON_TEXT: Record<OutcomeReason, string> = {
   overtime_expired: 'Overtime expired — everybody loses',
   all_eliminated: 'Everybody was eliminated',
   abandoned: 'Host left — game abandoned',
+  outscored: 'Out-scored the last rival',
+  last_standing: 'Last one standing',
 };
 
 export type Perspective = 'win' | 'lose' | 'draw' | 'spectator' | 'abandoned';
@@ -62,6 +65,8 @@ export function reasonText(result: GameResult, playerCount: number): string {
     case 'stolen':
     case 'opponent_out_of_rows':
     case 'forfeit':
+    case 'outscored':
+    case 'last_standing':
       return 'Last one standing';
     case 'fewer_rows':
     case 'same_rows_earlier':
@@ -80,6 +85,8 @@ export function playerFate(p: PublicPlayer, players: readonly PublicPlayer[]): s
   const by = findPlayer(players, p.eliminatedBy)?.nickname;
   if (p.eliminationReason === 'stolen') return by ? `stolen by ${by}` : 'word stolen';
   if (p.eliminationReason === 'out_of_rows') return 'out of rows';
+  if (p.eliminationReason === 'outscored') return 'out-scored in a duel';
+  if (p.eliminationReason === 'duel_draw') return 'duel drawn — both out';
   return 'left the game';
 }
 
@@ -123,6 +130,9 @@ export function explainResult(result: GameResult, players: readonly PublicPlayer
       return 'Nobody is left standing.';
     case 'abandoned':
       return 'The host left, so the match was abandoned.';
+    case 'outscored':
+    case 'last_standing':
+      return `${iWon ? 'You' : name(result.winnerId)} won.`; // battle-royale only; duels never end this way
   }
 }
 
@@ -137,6 +147,8 @@ function explainRoyale(result: GameResult, players: readonly PublicPlayer[], meI
     case 'stolen':
     case 'opponent_out_of_rows':
     case 'forfeit':
+    case 'outscored':
+    case 'last_standing':
       return `${who} outlasted all ${total - 1} rivals — last one standing!${mine}`;
     case 'fewer_rows':
     case 'same_rows_earlier':

@@ -1,6 +1,6 @@
 import { createRng } from '@/lib/engine/rng';
 import { DEBUG_SETTINGS, DEFAULT_SETTINGS, resolveSettings } from '@/lib/engine/settings';
-import { isBattleRoyale, isPlayPhase } from '@/lib/engine/state';
+import { isBattleRoyale, isPlayPhase, isWaiting } from '@/lib/engine/state';
 import type {
   ClientAction,
   DistributiveOmit,
@@ -20,6 +20,7 @@ import {
 import { createTransport, type RoomTransport, type TransportStatus } from '@/lib/realtime/transport';
 import { applyDelta, decodeState, isWireDelta } from '@/lib/realtime/wire';
 import { loadDictionary } from '@/lib/words';
+import { clockOf, isPlayClock, spaceAction } from './clock';
 import { REJECT_TEXT } from './copy';
 import { randomSeed } from './ids';
 import { loadSeq, saveSeq } from './identity';
@@ -264,14 +265,17 @@ export class RoomClient {
     const target = targetOf(s);
     if (!me || !s.game || !isPlayPhase(s.game.phase)) return;
     const prevMe = prevGame?.players.find((p) => p.id === me.id);
-    if (me.status === 'invulnerable' && prevMe?.status !== 'invulnerable') {
-      useRoom.setState({ mode: 'steal' }); // FR-4.7: solved → steal mode by default
+    // Battle royale: the referee paired me with a new opponent (a FRESH duel — new word, blank board,
+    // v1.1 FD-1), or I'm waiting for one (no input at all, WR-2). Either way the old draft, pending
+    // row and mirrored drafts belong to a duel that is over.
+    if (prevMe && prevMe.targetId !== me.targetId && isBattleRoyale(s.game.players.length) && me.status !== 'eliminated') {
+      useRoom.setState({ mode: 'own', draft: '', pending: null, drafts: {} });
+      this.scheduleDraft(true);
+      this.toast(target ? `⚔ New opponent: ${target.nickname}` : '⏳ You won your duel — waiting for a new opponent', 'info');
       return;
     }
-    // Battle royale: the referee paired me with a new opponent, or I'm waiting for a free one.
-    if (prevMe && prevMe.targetId !== me.targetId && isBattleRoyale(s.game.players.length) && me.status !== 'eliminated') {
-      if (s.mode === 'steal' && (me.status === 'alive' || !target)) useRoom.setState({ mode: 'own' });
-      this.toast(target ? `⚔ New opponent: ${target.nickname}` : '⏳ Waiting for a free opponent…', 'info');
+    if (me.status === 'invulnerable' && prevMe?.status !== 'invulnerable') {
+      useRoom.setState({ mode: 'steal' }); // FR-4.7: solved → steal mode by default
       return;
     }
     if (s.mode === 'steal' && me.status === 'alive' && target && target.status !== 'alive') {
@@ -396,11 +400,19 @@ export class RoomClient {
     this.sendAction({ type: 'UPDATE_SETTINGS', patch });
   }
 
-  /** Whether this client may type right now. */
+  /** v1.1 WR-1: a battle-royale player with no opponent is waiting and can take no action. */
+  isWaiting(): boolean {
+    const s = useRoom.getState();
+    const me = myPlayer(s);
+    return !!s.game && !!me && isBattleRoyale(s.game.players.length) && isWaiting(me, s.game.phase);
+  }
+
+  /** Whether this client may type right now (on its own duel's clock, FD-7). */
   canType(): boolean {
     const s = useRoom.getState();
     const me = myPlayer(s);
-    if (!s.game || !isPlayPhase(s.game.phase) || !me || me.status === 'eliminated' || s.localAbandoned) return false;
+    if (!s.game || !me || me.status === 'eliminated' || s.localAbandoned || this.isWaiting()) return false;
+    if (!isPlayClock(clockOf(s.game, me))) return false;
     if (me.status === 'invulnerable') {
       const target = targetOf(s);
       return me.postSolveStealRows > 0 && !!target && target.status === 'alive';
@@ -413,7 +425,7 @@ export class RoomClient {
     const s = useRoom.getState();
     const me = myPlayer(s);
     const target = targetOf(s);
-    if (!s.game || !isPlayPhase(s.game.phase) || !me) return 'Not in play';
+    if (!s.game || !me || !isPlayClock(clockOf(s.game, me))) return this.isWaiting() ? 'Waiting for an opponent' : 'Not in play';
     if (me.status === 'eliminated') return 'You’re eliminated';
     if (!target) return 'Waiting for an opponent';
     if (target.status === 'invulnerable') return `${target.nickname} is shielded`;
@@ -425,7 +437,7 @@ export class RoomClient {
   setMode(mode: InputMode): void {
     const s = useRoom.getState();
     const me = myPlayer(s);
-    if (!me || s.mode === mode) return;
+    if (!me || s.mode === mode || this.isWaiting()) return; // WR-2: nothing happens while waiting
     if (mode === 'steal') {
       const blocked = this.stealBlockReason();
       if (blocked) {
@@ -442,6 +454,19 @@ export class RoomClient {
 
   toggleMode(): void {
     this.setMode(useRoom.getState().mode === 'own' ? 'steal' : 'own');
+  }
+
+  /** FR-4.2a: Space toggles own ⇄ steal (same rules as Tab); ignored when shielded / waiting / held. */
+  spaceToggle(repeat: boolean): void {
+    const s = useRoom.getState();
+    const me = myPlayer(s);
+    const decision = spaceAction({
+      clockPhase: clockOf(s.game, me).phase,
+      status: me?.status,
+      waiting: this.isWaiting(),
+      repeat,
+    });
+    if (decision === 'toggle') this.toggleMode();
   }
 
   typeLetter(ch: string): void {
@@ -507,6 +532,7 @@ export class RoomClient {
     const s = useRoom.getState();
     if (!s.game || !isPlayPhase(s.game.phase) || !myPlayer(s)) return;
     if (s.game.players.length > DRAFT_MIRROR_MAX_PLAYERS) return;
+    if (this.isWaiting() && !immediate) return;
     const send = () => {
       this.draftTimer = null;
       this.lastDraftAt = Date.now();

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { GameEvent } from '@/lib/engine/types';
+import type { GameEvent, Phase } from '@/lib/engine/types';
+import { clockOf } from '@/lib/client/clock';
+import { findPlayer } from '@/lib/client/players';
 import { useRoom, type FxEntry } from '@/lib/client/store';
 
 /** Re-renders every `intervalMs` and returns the current time (kept in state → pure renders). */
@@ -59,13 +61,29 @@ export function useElementSize<T extends HTMLElement>() {
 }
 
 /** Milliseconds left in the current phase on the HOST clock (FR-5.1, §8.3 clock sync). */
-export function usePhaseRemaining(intervalMs = 200): number | null {
-  const { phaseEndsAt, offset } = useRoom(
-    useShallow((s) => ({ phaseEndsAt: s.game?.phaseEndsAt, offset: s.clockOffset })),
+export function usePhaseRemaining(intervalMs = 200, playerId?: string): number | null {
+  return useClock(intervalMs, playerId).remaining;
+}
+
+/**
+ * The clock a viewer sees (v1.1 FD-7): in a battle royale `playerId`'s own duel clock (no clock
+ * while waiting, none for spectators without a player); in a 2-player match the match clock.
+ */
+export function useClock(intervalMs = 200, playerId?: string): { phase?: Phase; remaining: number | null } {
+  const { phase, endsAt, offset } = useRoom(
+    useShallow((s) => {
+      const c = clockOf(s.game, playerId ? findPlayer(s.game?.players ?? [], playerId) : undefined);
+      return { phase: c.phase, endsAt: c.endsAt, offset: s.clockOffset };
+    }),
   );
   const now = useNow(intervalMs);
-  if (phaseEndsAt === undefined || now === 0) return null;
-  return Math.max(0, phaseEndsAt - (now + offset));
+  if (endsAt === undefined || now === 0) return { phase, remaining: null };
+  return { phase, remaining: Math.max(0, endsAt - (now + offset)) };
+}
+
+/** Duel-scoped events (v1.1: PLAY_STARTED / OVERTIME_START carry `playerIds`) concern only that duel. */
+export function concerns(e: { playerIds?: string[] }, viewerId: string | undefined): boolean {
+  return !e.playerIds || (!!viewerId && e.playerIds.includes(viewerId));
 }
 
 type EventOf<T extends GameEvent['type']> = Extract<GameEvent, { type: T }>;

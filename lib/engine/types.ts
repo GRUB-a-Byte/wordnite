@@ -14,7 +14,14 @@ export type Phase = 'LOBBY' | 'COUNTDOWN' | 'PLAYING' | 'OVERTIME' | 'FINISHED' 
 
 export type PlayerStatus = 'alive' | 'invulnerable' | 'eliminated';
 
-export type EliminationReason = 'stolen' | 'out_of_rows' | 'forfeit';
+/**
+ * `outscored` (v1.1 FD-4): lost a battle-royale duel on rows (GR-27 / GR-28) or on the duel clock
+ * (GR-30). `duel_draw` (v1.1 FD-3): the duel's overtime ran out with nobody solved — both are out.
+ */
+export type EliminationReason = 'stolen' | 'out_of_rows' | 'forfeit' | 'outscored' | 'duel_draw';
+
+/** v1.1 FD-7: the phase of one battle-royale duel's own clock. */
+export type DuelPhase = 'COUNTDOWN' | 'PLAYING' | 'OVERTIME';
 
 /** FIX 3: all rule constants are plain numbers/booleans, validated by `validateSettings()`. */
 export interface GameSettings {
@@ -70,11 +77,23 @@ export interface PublicPlayer {
   targetId?: string;
   /** Highest clientSeq the host has processed for this player (acts as the action ack, FIX 6). */
   lastSeq: number;
+  /**
+   * v1.1 FD-7 (battle royale only): this player's current duel clock, identical on both players of
+   * a pair. Unset while waiting for an opponent, once eliminated, and in a 2-player match (which
+   * uses the match clock, `phaseEndsAt`).
+   */
+  duelPhase?: DuelPhase;
+  /** Host-clock deadline of `duelPhase`. */
+  duelEndsAt?: number;
+  /** GR-34 per duel: overtime happens at most once in each duel. */
+  duelOvertimeUsed?: boolean;
 }
 
 /** Referee-only player record. `secret` must never leave the host except via FINISHED reveal. */
 export interface PrivatePlayer extends PublicPlayer {
   secret: string;
+  /** v1.1 FD-1: words this player already had this match (a fresh duel avoids them). Referee-only. */
+  pastSecrets?: string[];
 }
 
 export interface Spectator {
@@ -96,7 +115,11 @@ export type OutcomeReason =
   | 'forfeit'
   | 'overtime_expired'
   | 'all_eliminated'
-  | 'abandoned';
+  | 'abandoned'
+  /** v1.1: battle royale won because the last rival lost their duel on rows / time (FD-4). */
+  | 'outscored'
+  /** v1.1: battle royale won because the last two rivals drew their duel (FD-3). */
+  | 'last_standing';
 
 export interface Standing {
   playerId: string;
@@ -115,13 +138,15 @@ export interface GameResult {
 
 export type GameEvent =
   | { id: number; type: 'MATCH_STARTED'; matchNumber: number }
-  | { id: number; type: 'PLAY_STARTED' }
+  /** `playerIds` (v1.1): set when one battle-royale duel's countdown ends (FD-7). */
+  | { id: number; type: 'PLAY_STARTED'; playerIds?: string[] }
   | { id: number; type: 'ROW_ADDED'; playerId: string; rowId: string }
   | { id: number; type: 'SOLVED'; playerId: string; rows: number }
   | { id: number; type: 'STEAL_MISS'; stealerId: string; targetId: string; rowId: string }
   | { id: number; type: 'STEAL_HIT'; stealerId: string; targetId: string; rowId: string }
   | { id: number; type: 'ELIMINATED'; playerId: string; reason: EliminationReason }
-  | { id: number; type: 'OVERTIME_START'; extraRows: number }
+  /** `playerIds` (v1.1): set when one battle-royale duel goes into overtime (FD-7). */
+  | { id: number; type: 'OVERTIME_START'; extraRows: number; playerIds?: string[] }
   /** A player was paired with a new opponent (`targetId`), or is now waiting for one (unset). */
   | { id: number; type: 'TARGET_CHANGED'; playerId: string; targetId?: string }
   | { id: number; type: 'FINISHED'; result: GameResult };
@@ -205,7 +230,9 @@ export type RejectReason =
   | 'not_host'
   | 'not_a_player'
   | 'not_enough_players'
-  | 'invalid_settings';
+  | 'invalid_settings'
+  /** v1.1 WR-1: a battle-royale player without an opponent can take no action. */
+  | 'waiting_for_opponent';
 
 export interface Rejection {
   playerId: string;

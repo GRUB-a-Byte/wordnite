@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, validateSettings } from './settings';
-import type { GameSettings, Phase, PrivateGameState, PrivatePlayer } from './types';
+import type { GameSettings, Phase, PrivateGameState, PrivatePlayer, PublicPlayer } from './types';
 
 /** Phases in which the match clock runs and players can be eliminated. */
 export function isActivePhase(phase: Phase): boolean {
@@ -76,6 +76,21 @@ export function resetPlayerForMatch(p: PrivatePlayer, settings: GameSettings, se
   delete p.eliminatedBy;
   delete p.eliminationReason;
   delete p.disconnectedAt;
+}
+
+/** v1.1 FD-7: forget a player's duel clock (waiting, eliminated, between matches). */
+export function clearDuelClock(p: PublicPlayer): void {
+  delete p.duelPhase;
+  delete p.duelEndsAt;
+  delete p.duelOvertimeUsed;
+}
+
+/**
+ * v1.1 WR-1: a battle-royale player still in the battle who has no opponent is WAITING and may take
+ * no action. Never true in a 2-player match (the pair holds for the whole match).
+ */
+export function isWaiting(p: Pick<PublicPlayer, 'status' | 'targetId'>, phase: Phase): boolean {
+  return isActivePhase(phase) && p.status !== 'eliminated' && !p.targetId;
 }
 
 export interface CreateRoomInput {

@@ -42,12 +42,14 @@ export function evaluateOutcome(
     const decisive = [...players]
       .filter((p) => p.status === 'eliminated')
       .sort((a, b) => (b.eliminatedAt ?? 0) - (a.eliminatedAt ?? 0))[0];
-    const reason =
-      decisive?.eliminationReason === 'stolen'
-        ? 'stolen'
-        : decisive?.eliminationReason === 'forfeit'
-          ? 'forfeit'
-          : 'opponent_out_of_rows';
+    const byReason = {
+      stolen: 'stolen',
+      forfeit: 'forfeit',
+      out_of_rows: 'opponent_out_of_rows',
+      outscored: 'outscored', // v1.1: the last rival lost their duel on rows / time
+      duel_draw: 'last_standing', // v1.1: the last two rivals drew their duel
+    } as const;
+    const reason = decisive?.eliminationReason ? byReason[decisive.eliminationReason] : 'opponent_out_of_rows';
     return { outcome: 'win', winnerId: winner.id, loserId: decisive?.id, reason };
   }
 

@@ -341,3 +341,38 @@ In [e2e/battle-royale.spec.ts](../e2e/battle-royale.spec.ts):
 | A-12 | Final standings: winner first, then eliminated players, most recently out first; a draw's two players share a place. | Rank by duels won. |
 | A-13 | A finished duel's two words are shown to both of its players in the duel-result toast or flash, never to anyone while still active. | Reveal old words only on the end screen. |
 | A-14 | New secrets avoid every word the player has had before this match, while enough answers remain (2,014 answers; at most 99 duels). | Only avoid the current opponent's word (GR-2). |
+
+---
+
+## Implementation notes (v1.1 build, 2026-11-21)
+
+> Added during implementation. Where an item below conflicts with the text above, **this section
+> takes precedence**.
+
+### I.1 Decisions taken while building
+
+| Item | Decision |
+|---|---|
+| Match start (FD-7) | A battle royale goes straight to `PLAYING` at START. There is no match-level countdown; each duel runs its own 3-2-1. 2-player matches keep `COUNTDOWN` → `PLAYING` as before. |
+| Duel draw (FD-3) | Both players are eliminated with the new reason **`duel_draw`**, in addition to `outscored`. |
+| Match result reasons | A battle royale whose last rival was out-scored ends with reason `outscored`; one whose last two rivals drew ends with `last_standing`. Both read "Last one standing" on the end screen. |
+| Standings (A-12) | Competition ranking: players eliminated at the same moment (a drawn duel) share a place, e.g. 1, 2, 2. |
+| A-13 | **Not implemented.** A finished duel's old words are not revealed mid-match; they appear only for players' final words on the end screen. |
+| WR-5 list | Waiting players are listed without row counts, because their last duel's rows are history. |
+| Spectators (A-11) | The projector grid shows each duel's own clock on its two mini boards ("3…", "1:42", "OT 0:31", "⏳" while waiting). The match-wide timer is gone. |
+| Overlays | "GO!", the overtime banner and the winged god only fire for the two players of that duel (`playerIds` on the event). Spectators of a battle royale don't see per-duel overlays. |
+| Client reset | When a player's opponent changes (new duel or waiting room), the client drops the draft, pending row and mirrored drafts and returns to own-guess mode. |
+
+### I.2 Verification
+
+- **Unit tests:** 175 pass. New: fresh duels, per-duel clocks / overtime / draws, waiting-room rejections, FD-6, E-4 in a battle royale, Space rules, matchups. The 1.0 two-player engine tests are unchanged.
+- **E2E:** all 5 pass. `battle-royale.spec.ts` now covers:
+  - the Space toggle (draft kept, no scroll, announced);
+  - the waiting room (no board, no keyboard, no timer; typing is refused);
+  - fresh duels (blank boards, new word);
+  - per-duel spectator clocks.
+- **Stress (opt-in):**
+  - `LOADTEST=1 npx playwright test e2e/load-100.spec.ts`: 1 browser host + 99 bot agents over the local relay.
+  - `STRESS=1 npx vitest run lib/engine/__tests__/stress.test.ts`: randomised 100-player matches through the referee.
+  - Results: 3 / 3 browser runs and 500 / 500 engine matches finished with 0 crashes, 0 page errors and 0 invariant violations. No action was ever accepted from a waiting player. Ack p95 ≈ 108 ms on localhost.
+- **Not verified:** Supabase Realtime at 100 players (quota estimate unchanged, see Z.9), and real devices.

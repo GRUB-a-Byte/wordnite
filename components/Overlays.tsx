@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { isBattleRoyale } from '@/lib/engine/state';
 import { nicknameOf } from '@/lib/client/players';
 import { useRoom } from '@/lib/client/store';
-import { formatClock, useLatestFx, usePhaseRemaining } from './hooks';
+import { concerns, formatClock, useClock, useLatestFx } from './hooks';
 
 interface Banner {
   key: string;
@@ -26,7 +26,7 @@ function useBanner(): Banner | null {
     const best = Math.min(...players.filter((p) => p.solvedInRows !== undefined).map((p) => p.solvedInRows as number));
     return e.rows <= best;
   });
-  const overtime = useLatestFx('OVERTIME_START');
+  const overtime = useLatestFx('OVERTIME_START', (e) => concerns(e, me)); // v1.1: only your duel's overtime
   // Battle royale steals that involve you (in a duel a steal ends the match — the end screen says it).
   const hit = useLatestFx('STEAL_HIT', (e) => royale && (e.stealerId === me || e.targetId === me));
   const name = (id: string) => nicknameOf(players, id);
@@ -111,11 +111,10 @@ export function StatusLine({ hint }: { hint?: React.ReactNode }) {
   );
 }
 
-/** GR-4: 3-2-1 countdown, then "GO!". */
-export function CountdownOverlay() {
-  const phase = useRoom((s) => s.game?.phase);
-  const remaining = usePhaseRemaining(100);
-  const go = useLatestFx('PLAY_STARTED');
+/** GR-4: 3-2-1 countdown, then "GO!" — v1.1 FD-7: on `viewerId`'s own duel clock in a battle royale. */
+export function CountdownOverlay({ viewerId }: { viewerId?: string }) {
+  const { phase, remaining } = useClock(100, viewerId);
+  const go = useLatestFx('PLAY_STARTED', (e) => concerns(e, viewerId));
   const n = phase === 'COUNTDOWN' && remaining !== null ? Math.max(1, Math.ceil(remaining / 1000)) : null;
   return (
     <AnimatePresence>
@@ -188,8 +187,8 @@ function WingedFigure() {
  * UI-12 overtime "winged god": a 2-second, non-blocking (pointer-events: none) overlay. Flies in
  * from the top, drops "+3" onto each side, and flies off. Overtime LOGIC lives in the engine.
  */
-export function OvertimeGod() {
-  const ot = useLatestFx('OVERTIME_START');
+export function OvertimeGod({ viewerId }: { viewerId?: string }) {
+  const ot = useLatestFx('OVERTIME_START', (e) => concerns(e, viewerId));
   return (
     <AnimatePresence>
       {ot && (

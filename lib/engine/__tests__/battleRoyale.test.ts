@@ -29,10 +29,27 @@ class BrSim extends EngineHarness {
     return this;
   }
 
-  /** Steal the stealer's CURRENT target's word. */
+  /** v1.1 FD-7: a new duel starts with its own countdown — skip it (no-op if already playing). */
+  ready(playerId: string): this {
+    const p = this.p(playerId);
+    if (p.duelPhase === 'COUNTDOWN' && p.duelEndsAt !== undefined) {
+      this.now = Math.max(this.now, p.duelEndsAt);
+      this.dispatch({ type: 'TICK' });
+    }
+    return this;
+  }
+
+  /** Steal the stealer's CURRENT target's word (after their duel's countdown). */
   stealTarget(stealerId: string): ReduceResult {
+    this.ready(stealerId);
     const t = this.p(this.p(stealerId).targetId as string);
     return this.client({ type: 'STEAL', playerId: stealerId, targetId: t.id, word: t.secret });
+  }
+
+  /** Solve your own CURRENT word (after your duel's countdown). */
+  solve(playerId: string): ReduceResult {
+    this.ready(playerId);
+    return this.guess(playerId, this.p(playerId).secret);
   }
 
   /** Pairs fight it out, one winning steal at a time, until the match is over. */
@@ -48,7 +65,8 @@ class BrSim extends EngineHarness {
 
   /** Never burns with anyone's secret, so a burn can't accidentally solve or steal. */
   override burn(playerId: string, n: number): void {
-    super.burn(playerId, n, SECRETS);
+    this.ready(playerId);
+    super.burn(playerId, n, [...SECRETS, ...this.state.players.map((p) => p.secret)]);
   }
 }
 
@@ -185,21 +203,22 @@ describe('battle royale — symmetric pairs (A↔B, C↔D, …)', () => {
     expect(sim.p('p0')).toMatchObject({ status: 'eliminated', eliminatedBy: solver });
   });
 
-  it('a pair that can no longer fight splits up, and the unsolved player is paired again', () => {
+  it('v1.1 FD-6: a pair never splits — a solved player out of steal shots keeps their duel', () => {
     const sim = new BrSim(5, { settings: { enableUnbeatableEarlyFinish: false } }).start();
     const [waiting] = waitingIds(sim);
     const x = anyPaired(sim);
     const y = sim.p(x).targetId as string;
-    sim.guess(y, sim.p(y).secret); // y solves: shielded, with free steal shots at x
-    expect(sim.p(x).targetId).toBe(y);
+    sim.solve(y); // y solves: shielded, with free steal shots at x
     for (const w of TEST_WORDS.filter((t) => !SECRETS.includes(t)).slice(0, 3)) {
       sim.client({ type: 'STEAL', playerId: y, targetId: x, word: w }); // three misses
     }
-    expect(sim.p(y).postSolveStealRows).toBe(0); // neither can steal from the other any more
-    expect(sim.p(x).targetId).toBe(waiting);
-    expect(sim.p(waiting as string).targetId).toBe(x);
-    expect(sim.p(y).targetId).toBeUndefined();
-    expect(pairViolations(sim.state)).toEqual([]);
+    expect(sim.p(y).postSolveStealRows).toBe(0);
+    expect(sim.p(x).targetId).toBe(y); // still each other's opponent…
+    expect(sim.p(y).targetId).toBe(x);
+    expect(sim.p(waiting as string).targetId).toBeUndefined(); // …and the waiting player keeps waiting
+    sim.solve(x); // x solves in 1 row; y took 1 own row too, but solved first → GR-27 tie on time
+    expect(sim.p(x)).toMatchObject({ status: 'eliminated', eliminationReason: 'outscored' });
+    expect(sim.p(y).targetId).toBe(waiting); // y wins the duel and meets the waiting player
   });
 
   it('a solved player with free steal shots left can be paired with a lone unsolved player', () => {
@@ -228,7 +247,7 @@ describe('battle royale — symmetric pairs (A↔B, C↔D, …)', () => {
   });
 });
 
-describe('battle royale — how a match ends', () => {
+describe('battle royale — how a duel and the match end (v1.1 FD-3, FD-4, FD-7)', () => {
   it('last one standing wins; placings run winner → most recently out → first out', () => {
     const sim = new BrSim(3).start();
     const [second] = waitingIds(sim);
@@ -248,59 +267,112 @@ describe('battle royale — how a match ends', () => {
     ]);
   });
 
-  it('when everyone still standing has solved, the best solve wins', () => {
-    const sim = new BrSim(3, { settings: { enableUnbeatableEarlyFinish: false } }).start();
-    sim.burn('p1', 1);
-    sim.guess('p1', sim.p('p1').secret); // p1: 2 rows
-    sim.burn('p2', 2);
-    sim.guess('p2', sim.p('p2').secret); // p2: 3 rows
-    expect(sim.state.phase).toBe('PLAYING'); // p0 still alive
-    sim.guess('p0', sim.p('p0').secret); // p0: 1 row — best
-    expect(sim.state.result).toMatchObject({ winnerId: 'p0', reason: 'fewer_rows' });
-    expect(sim.state.result?.standings?.map((s) => s.playerId)).toEqual(['p0', 'p1', 'p2']);
+  it('GR-27 per duel: both duelists solve → fewer rows wins the duel, the loser is out (outscored)', () => {
+    const sim = new BrSim(4, { settings: { enableUnbeatableEarlyFinish: false } }).start();
+    const a = 'p0';
+    const b = sim.p(a).targetId as string;
+    sim.burn(b, 1);
+    sim.solve(b); // b: 2 rows
+    sim.burn(a, 2);
+    sim.solve(a); // a: 3 rows
+    expect(sim.p(a)).toMatchObject({ status: 'eliminated', eliminationReason: 'outscored' });
+    expect(sim.p(b).status).not.toBe('eliminated');
+    expect(sim.state.phase).toBe('PLAYING'); // the other duel is still on
   });
 
-  it('generalised GR-28: ends as soon as no unsolved player can beat the best solve', () => {
-    const sim = new BrSim(3).start();
-    sim.burn('p1', 1);
-    sim.burn('p2', 2);
-    sim.burn('p0', 1);
-    sim.guess('p0', sim.p('p0').secret); // p0 solved in 2; p1 has 1 (>= 1), p2 has 2 → nobody can beat it
-    expect(sim.state.result).toMatchObject({ winnerId: 'p0', reason: 'unbeatable' });
-  });
-
-  it('…but keeps going while somebody could still beat it', () => {
-    const sim = new BrSim(3).start();
-    sim.burn('p1', 1);
-    sim.burn('p0', 1);
-    sim.guess('p0', sim.p('p0').secret); // p0 solved in 2; p2 has 0 rows → could solve in 1
+  it('GR-28 per duel: ends the duel as soon as the unsolved player can no longer beat the solve', () => {
+    const sim = new BrSim(4).start();
+    const a = 'p0';
+    const b = sim.p(a).targetId as string;
+    sim.burn(b, 1);
+    sim.burn(a, 1);
+    sim.solve(a); // a solved in 2; b has 1 row used → can't beat it
+    expect(sim.p(b)).toMatchObject({ status: 'eliminated', eliminationReason: 'outscored' });
     expect(sim.state.phase).toBe('PLAYING');
   });
 
-  it('timeout with a solver: solvers first, then survivors, then the eliminated', () => {
-    const sim = new BrSim(4, { settings: { enableUnbeatableEarlyFinish: false } }).start();
-    sim.burn('p3', 2);
-    sim.guess('p3', sim.p('p3').secret); // solver
-    const victim = sim.p('p0').targetId === 'p3' ? null : (sim.p('p0').targetId as string);
-    if (victim) sim.stealTarget('p0');
-    sim.now += DEFAULT_SETTINGS.matchMs;
-    sim.dispatch({ type: 'TICK' });
-    expect(sim.state.result).toMatchObject({ winnerId: 'p3', reason: 'timeout_solver' });
-    const order = sim.state.result?.standings?.map((s) => s.playerId) ?? [];
-    expect(order[0]).toBe('p3');
-    if (victim) expect(order.at(-1)).toBe(victim);
-    expect(new Set(order).size).toBe(4);
+  it('…but the duel goes on while the opponent could still beat it, whatever other duels do', () => {
+    const sim = new BrSim(4).start();
+    const a = 'p0';
+    const b = sim.p(a).targetId as string;
+    sim.burn(a, 1);
+    sim.solve(a); // a solved in 2; b has 0 rows → could solve in 1
+    expect(sim.p(b).status).toBe('alive');
+    expect(sim.p(b).targetId).toBe(a);
   });
 
-  it('timeout with nobody solved → overtime: every alive player gets +3 rows', () => {
-    const sim = new BrSim(5).start();
-    sim.stealTarget(anyPaired(sim));
-    sim.now += DEFAULT_SETTINGS.matchMs;
+  it('FD-7: a duel clock running out with one solver → the solver wins the duel; other duels are untouched', () => {
+    const sim = new BrSim(4, { settings: { enableUnbeatableEarlyFinish: false } }).start();
+    const a = 'p0';
+    const b = sim.p(a).targetId as string;
+    sim.burn(a, 2);
+    sim.solve(a);
+    sim.now = (sim.p(a).duelEndsAt as number) + 1;
     sim.dispatch({ type: 'TICK' });
-    expect(sim.state.phase).toBe('OVERTIME');
-    for (const p of sim.state.players) {
-      expect(p.rowLimit).toBe(p.status === 'alive' ? 9 : 6);
-    }
+    expect(sim.p(b)).toMatchObject({ status: 'eliminated', eliminationReason: 'outscored' });
+    const others = sim.state.players.filter((p) => p.id !== a && p.id !== b);
+    // The other duel started at the same moment, so it also timed out — with nobody solved → its own overtime.
+    for (const p of others) expect(p).toMatchObject({ duelPhase: 'OVERTIME', rowLimit: 9 });
+    expect(sim.state.phase).toBe('PLAYING'); // no match-level overtime
+  });
+
+  it('FD-7: nobody solved → that duel’s own overtime (+3 rows); overtime out with nobody solved → both are out', () => {
+    const sim = new BrSim(5).start();
+    const [waiting] = waitingIds(sim);
+    const a = anyPaired(sim);
+    const b = sim.p(a).targetId as string;
+    sim.now = (sim.p(a).duelEndsAt as number) + 1;
+    sim.dispatch({ type: 'TICK' });
+    expect(sim.p(a)).toMatchObject({ duelPhase: 'OVERTIME', rowLimit: 9, duelOvertimeUsed: true });
+    expect(sim.last.events.some((e) => e.type === 'OVERTIME_START' && e.playerIds?.includes(a))).toBe(true);
+    expect(sim.p(waiting as string).rowLimit).toBe(6); // waiting players get nothing
+    sim.now = (sim.p(a).duelEndsAt as number) + 1;
+    sim.dispatch({ type: 'TICK' });
+    expect(sim.p(a)).toMatchObject({ status: 'eliminated', eliminationReason: 'duel_draw' });
+    expect(sim.p(b)).toMatchObject({ status: 'eliminated', eliminationReason: 'duel_draw' });
+  });
+
+  it('FD-7: every duel has its own clock — a duel that starts later gets its own full 2:00', () => {
+    const sim = new BrSim(5).start();
+    const [waiting] = waitingIds(sim);
+    const winner = anyPaired(sim);
+    sim.now += 60_000;
+    sim.stealTarget(winner); // a minute in: winner meets the waiting player in a fresh duel
+    const startedAt = sim.now;
+    expect(sim.p(winner)).toMatchObject({ targetId: waiting, duelPhase: 'COUNTDOWN', duelEndsAt: startedAt + 3_000 });
+    sim.ready(winner);
+    expect(sim.p(winner).duelEndsAt).toBe(startedAt + 3_000 + DEFAULT_SETTINGS.matchMs);
+    // The first-round duel that is still on times out at its own deadline; the new duel plays on.
+    const other = sim.state.players.find((p) => p.targetId && p.id !== winner && p.id !== waiting) as PrivatePlayer;
+    sim.now = (other.duelEndsAt as number) + 1;
+    sim.dispatch({ type: 'TICK' });
+    expect(sim.p(other.id).duelPhase).toBe('OVERTIME');
+    expect(sim.p(winner).duelPhase).toBe('PLAYING');
+  });
+
+  it('there is no global match timer: the match only ends when one (or no) player is left', () => {
+    const sim = new BrSim(3).start();
+    expect(sim.state.phaseEndsAt).toBeUndefined();
+    sim.now += 10 * 60_000; // way past any 2:00 + overtime: the duel draws, the waiting player is left
+    sim.dispatch({ type: 'TICK' });
+    expect(sim.state.phase).toBe('FINISHED');
+    const [w] = sim.state.players.filter((p) => p.status !== 'eliminated');
+    expect(sim.state.result).toMatchObject({ outcome: 'win', winnerId: w?.id, reason: 'last_standing' });
+    // The drawn pair share 2nd place.
+    expect(sim.state.result?.standings?.map((x) => x.place)).toEqual([1, 2, 2]);
+  });
+
+  it('the last duel ending in a draw with nobody else left is a match draw', () => {
+    const sim = new BrSim(4).start();
+    sim.stealTarget('p0');
+    const other = sim.state.players.find((p) => p.status === 'alive' && p.id !== 'p0' && p.targetId !== 'p0') as PrivatePlayer;
+    sim.stealTarget(other.id); // the two winners meet
+    sim.ready('p0');
+    sim.now = (sim.p('p0').duelEndsAt as number) + 1;
+    sim.dispatch({ type: 'TICK' }); // overtime
+    sim.now = (sim.p('p0').duelEndsAt as number) + 1;
+    sim.dispatch({ type: 'TICK' }); // overtime out
+    expect(sim.state.result).toMatchObject({ outcome: 'draw', reason: 'all_eliminated' });
   });
 
   it('rematch drops players who left and starts with the rest', () => {
@@ -312,8 +384,83 @@ describe('battle royale — how a match ends', () => {
     expect(sim.state.phase).toBe('FINISHED');
     sim.dispatch({ type: 'PRESENCE_LEAVE', playerId: 'p3' });
     sim.client({ type: 'REMATCH', playerId: 'p0' });
-    expect(sim.state.phase).toBe('COUNTDOWN');
+    expect(sim.state.phase).toBe('PLAYING'); // battle royale: duels run their own countdowns
     expect(sim.state.players.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
+  });
+});
+
+describe('battle royale — fresh duels and the waiting room (v1.1 FD-1, WR-1)', () => {
+  it('every new pairing is a fresh duel: new words, blank boards, nothing carried over', () => {
+    const sim = new BrSim(5, { settings: { enableUnbeatableEarlyFinish: false } }).start();
+    const [waiting] = waitingIds(sim);
+    const winner = anyPaired(sim);
+    const loser = sim.p(winner).targetId as string;
+    const oldWinnerWord = sim.p(winner).secret;
+    const oldWaitingWord = sim.p(waiting as string).secret;
+    sim.burn(winner, 2);
+    sim.solve(winner); // shielded, 3 free steal shots, 3 rows used
+    sim.stealTarget(winner); // knocks the opponent out with a free shot
+    expect(sim.p(loser).status).toBe('eliminated');
+    expect(sim.p(winner).targetId).toBe(waiting);
+    for (const id of [winner, waiting as string]) {
+      expect(sim.p(id)).toMatchObject({ status: 'alive', rows: [], rowsUsed: 0, rowLimit: 6, postSolveStealRows: 0 });
+      expect(sim.p(id).solvedInRows).toBeUndefined();
+      expect(sim.p(id).duelPhase).toBe('COUNTDOWN');
+    }
+    expect(sim.p(winner).secret).not.toBe(oldWinnerWord);
+    expect(sim.p(waiting as string).secret).not.toBe(oldWaitingWord);
+    expect(sim.p(winner).secret).not.toBe(sim.p(waiting as string).secret); // GR-2
+    const inPlay = sim.state.players.filter((p) => p.status !== 'eliminated').map((p) => p.secret);
+    expect(new Set(inPlay).size).toBe(inPlay.length);
+  });
+
+  it('WR-1: a waiting player can neither guess nor steal — nothing changes', () => {
+    const sim = new BrSim(5).start();
+    const [waiting] = waitingIds(sim) as [string];
+    const before = structuredClone(sim.p(waiting));
+    expect(sim.guess(waiting, 'TOAST').rejections[0]?.reason).toBe('waiting_for_opponent');
+    expect(sim.guess(waiting, sim.p(waiting).secret).rejections[0]?.reason).toBe('waiting_for_opponent');
+    const someone = anyPaired(sim);
+    expect(
+      sim.client({ type: 'STEAL', playerId: waiting, targetId: someone, word: sim.p(someone).secret }).rejections[0]?.reason,
+    ).toBe('waiting_for_opponent');
+    expect({ ...sim.p(waiting), lastSeq: 0 }).toEqual({ ...before, lastSeq: 0 });
+    expect(sim.p(someone).status).toBe('alive');
+  });
+
+  it('WR-1: a duel winner waits (no clock, no actions) until someone is free', () => {
+    const sim = new BrSim(4).start();
+    sim.stealTarget('p0');
+    expect(sim.p('p0').targetId).toBeUndefined();
+    expect(sim.p('p0').duelPhase).toBeUndefined();
+    expect(sim.guess('p0', 'TOAST').rejections[0]?.reason).toBe('waiting_for_opponent');
+  });
+
+  it('FD-7: nothing is accepted during a new duel’s countdown', () => {
+    const sim = new BrSim(4).start();
+    sim.stealTarget('p0');
+    const other = sim.state.players.find((p) => p.status === 'alive' && p.id !== 'p0' && p.targetId !== 'p0') as PrivatePlayer;
+    sim.stealTarget(other.id);
+    expect(sim.p('p0').duelPhase).toBe('COUNTDOWN');
+    expect(sim.guess('p0', 'TOAST').rejections[0]?.reason).toBe('not_playing');
+    sim.ready('p0');
+    expect(sim.guess('p0', 'TOAST').rejections).toEqual([]);
+  });
+
+  it('E-4 in a battle royale: a winning steal on your last row is a win, not out of rows', () => {
+    const sim = new BrSim(4).start();
+    const opp = sim.p('p0').targetId as string;
+    sim.burn('p0', 5);
+    sim.stealTarget('p0'); // 6th row
+    expect(sim.p(opp).status).toBe('eliminated');
+    expect(sim.p('p0').status).toBe('alive');
+  });
+
+  it('2 players never wait and never get a fresh duel', () => {
+    const sim = new BrSim(2).start();
+    expect(waitingIds(sim)).toEqual([]);
+    expect(sim.p('p0').duelPhase).toBeUndefined(); // the duel uses the match clock
+    expect(sim.state.phaseEndsAt).toBeDefined();
   });
 });
 
@@ -328,7 +475,7 @@ describe('battle royale — starting below the cap, late joiners, next match', (
     const dictionary = createDictionary(unpackWords(PACKED_VALID), unpackWords(PACKED_ANSWERS));
     const sim = new BrSim(20, { settings: { maxPlayers: 100 }, dictionary });
     sim.client({ type: 'START', playerId: 'p0' });
-    expect(sim.state.phase).toBe('COUNTDOWN');
+    expect(sim.state.phase).toBe('PLAYING'); // v1.1: no match countdown — each duel has its own
     expect(sim.state.players).toHaveLength(20);
   });
 
@@ -341,7 +488,7 @@ describe('battle royale — starting below the cap, late joiners, next match', (
     sim.playToLastStanding();
     expect(sim.state.phase).toBe('FINISHED');
     sim.client({ type: 'REMATCH', playerId: 'p0' });
-    expect(sim.state.phase).toBe('COUNTDOWN');
+    expect(sim.state.phase).toBe('PLAYING');
     expect(sim.state.players.map((p) => p.id)).toEqual(['p0', 'p1', 'p2', 'late0', 'late1', 'late2', 'late3', 'late4']);
     expect(sim.state.spectators.map((s) => s.id)).toEqual(['projector']); // ?watch=1 viewers keep watching
   });
@@ -410,7 +557,9 @@ describe('battle royale — 100 players', () => {
     const standings = result.standings!;
     expect(standings).toHaveLength(100);
     expect(new Set(standings.map((s) => s.playerId)).size).toBe(100);
-    expect(standings.map((s) => s.place)).toEqual(Array.from({ length: 100 }, (_, i) => i + 1));
+    // Places are competition ranks: 1, then non-decreasing (a drawn duel's pair shares a place).
+    expect(standings[0]?.place).toBe(1);
+    standings.forEach((s, i) => expect(s.place).toBeLessThanOrEqual(i + 1));
     if (result.outcome === 'win') expect(standings[0]?.playerId).toBe(result.winnerId);
     expect(violations).toEqual([]); // pairs stayed mutual after every single action
     expect(steals).toBeGreaterThan(20); // the match really was a battle royale, not a one-move finish

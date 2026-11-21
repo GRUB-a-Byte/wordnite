@@ -65,7 +65,7 @@ export function Keyboard() {
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => client.setMode('steal')}
           disabled={!!stealBlocked}
-          title={stealBlocked ?? 'Tab to toggle'}
+          title={stealBlocked ?? 'Space or Tab to toggle'}
           aria-pressed={attacking}
           className={`${modeBtn} max-w-[60%] ${
             attacking ? 'border-steal bg-steal text-on-accent' : 'border-line text-muted hover:border-blue-ink/60 hover:text-ink'
@@ -74,6 +74,12 @@ export function Keyboard() {
         >
           ⚔ Steal{target ? ` · ${target.nickname}` : ''}
         </button>
+        {/* FR-4.2a.6: key hint on devices with a physical keyboard (fine pointer) only. */}
+        {!stealBlocked && me.status === 'alive' && (
+          <kbd className="hidden shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-bold text-muted [@media(pointer:fine)]:inline">
+            Space ⇄
+          </kbd>
+        )}
       </div>
 
       <div className={`flex flex-col gap-[clamp(4px,0.7vmin,7px)] ${canType ? '' : 'opacity-50'}`}>
