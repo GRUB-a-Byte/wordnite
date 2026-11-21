@@ -171,7 +171,7 @@ function Abandoned() {
         <button
           type="button"
           onClick={() => client?.returnToLobby()}
-          className="rounded-xl bg-royal px-5 py-3 font-bold text-white"
+          className="rounded-xl bg-royal px-5 py-3 font-bold text-on-accent"
         >
           Back to lobby
         </button>
@@ -200,7 +200,7 @@ function Message({
       </h1>
       {body && <p className="text-muted">{body}</p>}
       {children}
-      <Link href="/" className="font-bold text-royal-2 underline">
+      <Link href="/" className="font-bold text-royal-2-ink underline">
         Back to home
       </Link>
     </main>
@@ -229,13 +229,13 @@ function NicknameGate({ code, onDone }: { code: string; onDone: (nick: string) =
           onChange={(e) => setNick(e.target.value.slice(0, NICKNAME_MAX))}
           maxLength={NICKNAME_MAX}
           placeholder="Your nickname"
-          className="w-full rounded-xl border border-line bg-night px-4 py-3 text-lg font-semibold outline-none focus:border-royal"
+          className="w-full rounded-xl border border-line bg-night px-4 py-3 text-lg font-semibold outline-none focus:border-blue-ink"
           data-testid="gate-nickname"
         />
         <button
           type="submit"
           disabled={!clean}
-          className="w-full rounded-xl bg-gradient-to-r from-royal to-fuchsia-500 py-3 text-lg font-black text-white disabled:opacity-50"
+          className="w-full rounded-xl bg-gradient-to-r from-royal to-blue py-3 text-lg font-black text-on-accent disabled:opacity-50"
           data-testid="gate-join"
         >
           Join game

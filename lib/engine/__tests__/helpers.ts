@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS, resolveSettings } from '../settings';
 import { createLobbyState } from '../state';
 import type {
   ClientAction,
+  DistributiveOmit,
   EngineAction,
   GameSettings,
   PrivateGameState,
@@ -27,26 +28,25 @@ export const A = 'pA';
 export const B = 'pB';
 
 /**
- * Drives the engine like the HostRunner does: one action at a time, with an injected clock.
- * `secrets` are forced by giving the dictionary exactly those answers and an rng that returns 0
- * (pickSecrets then picks them in order).
+ * Drives the engine like the HostRunner does: one action at a time, with an injected clock, rng
+ * and dictionary, auto-numbering each player's clientSeq. Subclasses set up the room.
  */
-export class Sim {
+export class EngineHarness {
   state: PrivateGameState;
   now = 1_000_000;
   dictionary: WordDictionary;
-  private seqs = new Map<string, number>();
+  rng: () => number;
   last!: ReduceResult;
+  private seqs = new Map<string, number>();
 
-  constructor(opts: { settings?: Partial<GameSettings>; secrets?: [string, string] } = {}) {
-    const settings = resolveSettings(opts.settings ?? {}, DEFAULT_SETTINGS);
-    this.dictionary = testDictionary(opts.secrets ?? ['CRANE', 'SLATE']);
-    this.state = createLobbyState({ roomCode: 'TEST', hostId: A, hostNickname: 'alice', settings });
-    this.dispatch({ type: 'PRESENCE_JOIN', playerId: B, nickname: 'bob', role: 'player' });
+  constructor(state: PrivateGameState, dictionary: WordDictionary, rng: () => number) {
+    this.state = state;
+    this.dictionary = dictionary;
+    this.rng = rng;
   }
 
-  dispatch(action: EngineAction, rng: () => number = () => 0): ReduceResult {
-    this.last = reduce(this.state, action, { now: this.now, rng, dictionary: this.dictionary });
+  dispatch(action: EngineAction): ReduceResult {
+    this.last = reduce(this.state, action, { now: this.now, rng: this.rng, dictionary: this.dictionary });
     this.state = this.last.state;
     return this.last;
   }
@@ -61,13 +61,6 @@ export class Sim {
     return this.dispatch({ ...action, clientSeq: this.nextSeq(action.playerId) } as ClientAction);
   }
 
-  /** START + skip the countdown → PLAYING. */
-  startPlaying(): this {
-    this.client({ type: 'START', playerId: A });
-    this.advance(this.state.settings.countdownMs);
-    return this;
-  }
-
   advance(ms: number): ReduceResult {
     this.now += ms;
     return this.dispatch({ type: 'TICK' });
@@ -77,21 +70,17 @@ export class Sim {
     return this.client({ type: 'GUESS', playerId, word });
   }
 
-  steal(playerId: string, word: string, targetId = playerId === A ? B : A): ReduceResult {
-    return this.client({ type: 'STEAL', playerId, targetId, word });
-  }
-
   p(id: string): PrivatePlayer {
     const p = this.state.players.find((x) => x.id === id);
     if (!p) throw new Error(`no player ${id}`);
     return p;
   }
 
-  /** Burns `n` own-guess rows for a player using non-solving distinct words. */
-  burn(playerId: string, n: number): void {
-    const secret = this.p(playerId).secret;
-    const used = new Set(this.p(playerId).rows.filter((r) => r.targetId === playerId).map((r) => r.word));
-    const words = TEST_WORDS.filter((w) => w !== secret && !used.has(w));
+  /** Burns `n` own-guess rows for a player using distinct TEST_WORDS not in `avoid` (default: their own secret). */
+  burn(playerId: string, n: number, avoid: readonly string[] = [this.p(playerId).secret]): void {
+    const p = this.p(playerId);
+    const used = new Set(p.rows.filter((r) => r.targetId === p.id).map((r) => r.word));
+    const words = TEST_WORDS.filter((w) => !avoid.includes(w) && !used.has(w));
     for (let i = 0; i < n; i++) {
       const res = this.guess(playerId, words[i] as string);
       if (res.rejections.length) throw new Error(`burn rejected: ${res.rejections[0]?.reason}`);
@@ -99,4 +88,30 @@ export class Sim {
   }
 }
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+/**
+ * The two-player duel (alice = A hosts, bob = B joins).
+ * `secrets` are forced by giving the dictionary exactly those answers and an rng that returns 0
+ * (pickSecrets then picks them in order).
+ */
+export class Sim extends EngineHarness {
+  constructor(opts: { settings?: Partial<GameSettings>; secrets?: [string, string] } = {}) {
+    const settings = resolveSettings(opts.settings ?? {}, DEFAULT_SETTINGS);
+    super(
+      createLobbyState({ roomCode: 'TEST', hostId: A, hostNickname: 'alice', settings }),
+      testDictionary(opts.secrets ?? ['CRANE', 'SLATE']),
+      () => 0,
+    );
+    this.dispatch({ type: 'PRESENCE_JOIN', playerId: B, nickname: 'bob', role: 'player' });
+  }
+
+  /** START + skip the countdown → PLAYING. */
+  startPlaying(): this {
+    this.client({ type: 'START', playerId: A });
+    this.advance(this.state.settings.countdownMs);
+    return this;
+  }
+
+  steal(playerId: string, word: string, targetId = playerId === A ? B : A): ReduceResult {
+    return this.client({ type: 'STEAL', playerId, targetId, word });
+  }
+}

@@ -1,4 +1,6 @@
+import { isBattleRoyale } from '@/lib/engine/state';
 import type { GameResult, OutcomeReason, PublicPlayer, RejectReason } from '@/lib/engine/types';
+import { findPlayer, nicknameOf } from './players';
 
 /** User-facing text for rejections (FR-3.3, E-2, E-6, E-12). */
 export const REJECT_TEXT: Record<RejectReason, string> = {
@@ -42,14 +44,54 @@ export function perspectiveOf(result: GameResult | undefined, meId: string, isPl
   return result.winnerId === meId ? 'win' : 'lose';
 }
 
+/** 1 → "1st", 2 → "2nd", 11 → "11th", 23 → "23rd". */
+export function ordinal(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th'}`;
+}
+
+export function placeOf(result: GameResult | undefined, playerId: string): number | undefined {
+  return result?.standings?.find((s) => s.playerId === playerId)?.place;
+}
+
+/** Headline reason. Battle royales (3+ players) describe the match, not "the opponent". */
+export function reasonText(result: GameResult, playerCount: number): string {
+  if (!isBattleRoyale(playerCount)) return REASON_TEXT[result.reason];
+  switch (result.reason) {
+    case 'stolen':
+    case 'opponent_out_of_rows':
+    case 'forfeit':
+      return 'Last one standing';
+    case 'fewer_rows':
+    case 'same_rows_earlier':
+    case 'unbeatable':
+    case 'timeout_solver':
+      return 'Best solve wins';
+    default:
+      return REASON_TEXT[result.reason];
+  }
+}
+
+/** One status word for a player in the final standings / arena lists. */
+export function playerFate(p: PublicPlayer, players: readonly PublicPlayer[]): string {
+  if (p.status === 'invulnerable' || p.solvedInRows !== undefined) return `🛡 solved in ${p.solvedInRows}`;
+  if (p.status === 'alive') return 'survived';
+  const by = findPlayer(players, p.eliminatedBy)?.nickname;
+  if (p.eliminationReason === 'stolen') return by ? `stolen by ${by}` : 'word stolen';
+  if (p.eliminationReason === 'out_of_rows') return 'out of rows';
+  return 'left the game';
+}
+
 /**
  * One-line explanation of why the match ended, tailored to the viewer. FIX 5: an "unbeatable"
  * finish must never read like an elimination or a steal.
  */
 export function explainResult(result: GameResult, players: readonly PublicPlayer[], meId: string): string {
-  const name = (id?: string) => players.find((p) => p.id === id)?.nickname ?? 'Opponent';
-  const winner = players.find((p) => p.id === result.winnerId);
-  const loser = players.find((p) => p.id === result.loserId);
+  if (isBattleRoyale(players.length)) return explainRoyale(result, players, meId);
+  const name = (id?: string) => nicknameOf(players, id, 'Opponent');
+  const winner = findPlayer(players, result.winnerId);
+  const loser = findPlayer(players, result.loserId);
   const iWon = result.winnerId === meId;
   const iLost = result.loserId === meId;
   switch (result.reason) {
@@ -77,6 +119,33 @@ export function explainResult(result: GameResult, players: readonly PublicPlayer
       return iLost ? 'You disconnected for too long.' : `${name(result.loserId)} disconnected and forfeited.`;
     case 'overtime_expired':
       return 'Overtime ran out with nobody solving. Everybody loses!';
+    case 'all_eliminated':
+      return 'Nobody is left standing.';
+    case 'abandoned':
+      return 'The host left, so the match was abandoned.';
+  }
+}
+
+function explainRoyale(result: GameResult, players: readonly PublicPlayer[], meId: string): string {
+  const winner = findPlayer(players, result.winnerId);
+  const iWon = result.winnerId === meId;
+  const who = iWon ? 'You' : (winner?.nickname ?? 'Someone');
+  const total = players.length;
+  const myPlace = placeOf(result, meId);
+  const mine = myPlace && !iWon ? ` You finished ${ordinal(myPlace)} of ${total}.` : '';
+  switch (result.reason) {
+    case 'stolen':
+    case 'opponent_out_of_rows':
+    case 'forfeit':
+      return `${who} outlasted all ${total - 1} rivals — last one standing!${mine}`;
+    case 'fewer_rows':
+    case 'same_rows_earlier':
+    case 'unbeatable':
+      return `${who} had the best solve: ${winner?.solvedInRows} rows.${mine}`;
+    case 'timeout_solver':
+      return `Time ran out — ${iWon ? 'your' : `${who}’s`} ${winner?.solvedInRows}-row solve was the best.${mine}`;
+    case 'overtime_expired':
+      return `Overtime ran out with nobody solving. Everybody loses!`;
     case 'all_eliminated':
       return 'Nobody is left standing.';
     case 'abandoned':

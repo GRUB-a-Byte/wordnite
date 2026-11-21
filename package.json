@@ -2,7 +2,7 @@
   "name": "word-royale",
   "version": "1.0.0",
   "private": true,
-  "description": "Word Royale — a real-time head-to-head five-letter word battle.",
+  "description": "Word Royale — a real-time five-letter word battle for 2–100 players.",
   "scripts": {
     "dev": "next dev",
     "dev:local": "node scripts/dev-local.mjs",

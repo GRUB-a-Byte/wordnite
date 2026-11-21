@@ -17,6 +17,7 @@ describe('GameSettings (FIX 3)', () => {
       guestGraceMs: 15000,
       hostGraceMs: 10000,
       maxPlayers: 2,
+      targetChoices: 3,
       enableUnbeatableEarlyFinish: true,
     });
     expect(settingsProblems({ ...DEFAULT_SETTINGS })).toEqual([]);
@@ -31,7 +32,9 @@ describe('GameSettings (FIX 3)', () => {
   it('rejects invalid values', () => {
     expect(() => resolveSettings({ baseRows: 0 })).toThrow(InvalidSettingsError);
     expect(() => resolveSettings({ matchMs: 1.5 })).toThrow(InvalidSettingsError);
-    expect(() => resolveSettings({ maxPlayers: 8 })).toThrow(/two players/);
+    expect(() => resolveSettings({ maxPlayers: 1 })).toThrow(/2 to 100 players/);
+    expect(() => resolveSettings({ maxPlayers: 101 })).toThrow(/2 to 100 players/);
+    for (const n of [2, 8, 100]) expect(resolveSettings({ maxPlayers: n }).maxPlayers).toBe(n);
     expect(() => resolveSettings({ wordLength: 6 })).toThrow(/5-letter/);
     expect(() =>
       resolveSettings({ enableUnbeatableEarlyFinish: 'no' as unknown as boolean }),
@@ -56,13 +59,24 @@ describe('word lists (SRS §8.7)', () => {
     for (const w of answers) expect(w).toMatch(/^[A-Z]{5}$/);
   });
 
-  it('valid-guess list is ~10–13k words and contains every answer', () => {
-    expect(valid.length).toBeGreaterThan(10_000);
-    expect(valid.length).toBeLessThan(13_000);
+  it('valid-guess list is the full merged SCOWL-95 + ENABLE set (~17.5k) and contains every answer', () => {
+    expect(valid.length).toBeGreaterThan(17_000);
+    expect(valid.length).toBeLessThan(20_000);
+    expect(new Set(valid).size).toBe(valid.length);
+    for (const w of valid.slice(0, 500)) expect(w).toMatch(/^[A-Z]{5}$/);
     const dict = createDictionary(valid, answers);
     for (const w of answers) expect(dict.isValid(w)).toBe(true);
     expect(dict.isValid('crane')).toBe(true);
     expect(dict.isValid('ZZZZZ')).toBe(false);
+  });
+
+  it('accepts rarer and borrowed words from the big lists as guesses', () => {
+    const dict = createDictionary(valid, answers);
+    for (const w of ['AIOLI', 'VOILA', 'MATHS', 'INTRO', 'XYLYL', 'FJORD']) expect(dict.isValid(w)).toBe(true);
+  });
+
+  it('secret answers stay common words (rare guess-only words are never secrets)', () => {
+    for (const w of ['XYLYL', 'KYDST', 'AALII']) expect(answers).not.toContain(w);
   });
 
   it('blocklisted words are never secret answers', () => {

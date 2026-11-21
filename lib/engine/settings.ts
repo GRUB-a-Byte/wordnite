@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: Readonly<GameSettings> = Object.freeze({
   guestGraceMs: 15_000,
   hostGraceMs: 10_000,
   maxPlayers: 2,
+  targetChoices: 3,
   enableUnbeatableEarlyFinish: true,
 });
 
@@ -42,8 +43,9 @@ const INT_RULES: Record<Exclude<keyof GameSettings, 'enableUnbeatableEarlyFinish
   overtimeMs: { min: 5_000, max: 10 * 60_000 },
   guestGraceMs: { min: 1_000, max: 120_000 },
   hostGraceMs: { min: 1_000, max: 120_000 },
-  // Release 1.0 is a 2-player duel. The engine is written over player arrays so this can grow later.
-  maxPlayers: { min: 2, max: 2, why: 'release 1.0 supports exactly two players' },
+  // 2 = the classic duel; up to 100 = battle royale (SRS §13). Host-configurable in the lobby.
+  maxPlayers: { min: 2, max: 100, why: 'a game holds 2 to 100 players' },
+  targetChoices: { min: 1, max: 5 },
 };
 
 export class InvalidSettingsError extends Error {

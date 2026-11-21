@@ -3,6 +3,7 @@ import { DEBUG_SETTINGS, DEFAULT_SETTINGS, resolveSettings } from '@/lib/engine/
 import { isActivePhase, isPlayPhase } from '@/lib/engine/state';
 import type {
   ClientAction,
+  DistributiveOmit,
   GameSettings,
   PresenceRole,
   PublicGameState,
@@ -10,17 +11,19 @@ import type {
 } from '@/lib/engine/types';
 import type { HostRunner } from '@/lib/realtime/hostRunner';
 import {
-  looksLikePublicState,
+  looksLikeWireState,
   parseDraft,
   parseRejection,
   type DraftPayload,
   type PresenceMeta,
 } from '@/lib/realtime/protocol';
 import { createTransport, type RoomTransport, type TransportStatus } from '@/lib/realtime/transport';
+import { applyDelta, decodeState, isWireDelta } from '@/lib/realtime/wire';
 import { loadDictionary } from '@/lib/words';
 import { REJECT_TEXT } from './copy';
 import { randomSeed } from './ids';
 import { loadSeq, saveSeq } from './identity';
+import { nicknameOf } from './players';
 import { markRevealed } from './revealed';
 import { initialRoomState, myPlayer, targetOf, useRoom, type InputMode, type Toast } from './store';
 
@@ -38,13 +41,14 @@ export interface RoomClientOptions {
 
 const DRAFT_MIRROR = process.env.NEXT_PUBLIC_DRAFT_MIRROR !== 'false';
 const DRAFT_INTERVAL_MS = 100; // FR-3.6: max 10 draft messages / second
+/** Live typing is mirrored only in small games (each draft is fanned out to every client). */
+const DRAFT_MIRROR_MAX_PLAYERS = 4;
 const SYNC_AFTER_MS = 3000; // pending ack missing → ask the host for a fresh snapshot
 const RESEND_AFTER_MS = 6000; // still missing → resend the same action (same clientSeq; host dedups)
 const GIVE_UP_AFTER_MS = 15000;
 const ROOM_NOT_FOUND_MS = 5000; // E-17
 const FX_TTL_MS = 4000; // how long synchronized events stay available to overlays
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type ActionInput = DistributiveOmit<ClientAction, 'playerId' | 'clientSeq'>;
 
 /**
@@ -140,6 +144,7 @@ export class RoomClient {
 
     this.unsubs.push(
       transport.on('state', (raw) => this.onState(raw)),
+      transport.on('state_delta', (raw) => this.onStateDelta(raw)),
       transport.on('reject', (raw) => this.onReject(raw)),
       transport.on('draft', (raw) => this.onDraft(raw)),
       transport.onPresence((m) => this.onPresence(m)),
@@ -168,8 +173,9 @@ export class RoomClient {
   // Inbound
   // -------------------------------------------------------------------------------------------
 
+  /** Full snapshot (first sync, resync, periodic safety). */
   private onState(raw: unknown): void {
-    if (!looksLikePublicState(raw) || raw.roomCode !== this.o.roomCode) return;
+    if (!looksLikeWireState(raw) || raw.roomCode !== this.o.roomCode) return;
     const cur = useRoom.getState().game;
     // Once we have followed a referee, ignore snapshots from any other "host" id (see the
     // security notes in docs/ARCHITECTURE.md — this is a sanity check, not authentication).
@@ -177,7 +183,25 @@ export class RoomClient {
     if (this.isHost) return; // the host applies its own snapshots directly (no echo needed)
     this.sampleOffset(raw.hostNow);
     if (cur && raw.version <= cur.version) return;
-    this.applyState(raw);
+    this.applyState(decodeState(raw));
+  }
+
+  /** Incremental update — only what changed since the version we hold (lib/realtime/wire.ts). */
+  private onStateDelta(raw: unknown): void {
+    if (this.isHost || !isWireDelta(raw)) return;
+    const cur = useRoom.getState().game;
+    if (!cur) {
+      this.requestSync();
+      return;
+    }
+    this.sampleOffset(raw.hostNow);
+    if (raw.v <= cur.version) return; // heartbeat, or an update we already have
+    const next = raw.base === cur.version ? applyDelta(cur, raw) : null;
+    if (!next) {
+      this.requestSync(); // we missed an update — ask the host for a full snapshot
+      return;
+    }
+    this.applyState(next);
   }
 
   private sampleOffset(hostNowMs: number): void {
@@ -222,9 +246,12 @@ export class RoomClient {
       }
     }
 
+    // Match over: drop in-flight notices so they do not cover the result.
+    if (pub.phase === 'FINISHED' && prevGame?.phase !== 'FINISHED') patch.toasts = [];
+
     // New match (start / rematch): clear all input state.
     if (prevGame && pub.matchNumber !== prevGame.matchNumber) {
-      Object.assign(patch, { draft: '', pending: null, mode: 'own' as InputMode, drafts: {} });
+      Object.assign(patch, { draft: '', pending: null, mode: 'own' as InputMode, drafts: {}, chosenTarget: null });
     }
 
     useRoom.setState(patch);
@@ -240,6 +267,15 @@ export class RoomClient {
     const prevMe = prevGame?.players.find((p) => p.id === me.id);
     if (me.status === 'invulnerable' && prevMe?.status !== 'invulnerable') {
       useRoom.setState({ mode: 'steal' }); // FR-4.7: solved → steal mode by default
+      return;
+    }
+    // Battle royale: the opponent I was attacking dropped off my shortlist (knocked out / solved)
+    // and the referee moved me to another option. (Switching by my own choice shows no toast.)
+    const lost = prevMe?.targetId && !(me.targetOptions ?? []).includes(prevMe.targetId) && prevMe.targetId !== me.targetId;
+    if (lost && me.targetId) {
+      const prevName = nicknameOf(prevGame?.players ?? [], prevMe?.targetId, 'Your target');
+      if (s.mode === 'steal' && me.status === 'alive') useRoom.setState({ mode: 'own' });
+      this.toast(`🎯 ${prevName} is out of reach — now targeting ${target?.nickname ?? '?'}`, 'info');
       return;
     }
     if (s.mode === 'steal' && me.status === 'alive' && target && target.status !== 'alive') {
@@ -408,6 +444,28 @@ export class RoomClient {
     this.scheduleDraft();
   }
 
+  /**
+   * Battle royale: attack this player from my shortlist. Shown instantly; the referee is told
+   * (SET_TARGET) so "hunting you" counts stay accurate. Steals name their target explicitly, so a
+   * steal sent before the referee confirms is still valid.
+   */
+  chooseTarget(targetId: string): void {
+    const s = useRoom.getState();
+    const me = myPlayer(s);
+    if (!me || !s.game || !isActivePhase(s.game.phase) || !(me.targetOptions ?? []).includes(targetId)) return;
+    useRoom.setState({ chosenTarget: targetId });
+    if (me.targetId !== targetId) this.sendAction({ type: 'SET_TARGET', targetId });
+    if (!this.stealBlockReason()) useRoom.setState({ mode: 'steal' }); // picking someone = ready to attack
+    this.scheduleDraft();
+  }
+
+  /** Keys 1–3 pick option 1–3 from the shortlist. */
+  chooseTargetIndex(index: number): void {
+    const me = myPlayer(useRoom.getState());
+    const id = me?.targetOptions?.[index];
+    if (id && (me?.targetOptions?.length ?? 0) > 1) this.chooseTarget(id);
+  }
+
   toggleMode(): void {
     this.setMode(useRoom.getState().mode === 'own' ? 'steal' : 'own');
   }
@@ -474,6 +532,7 @@ export class RoomClient {
     if (!DRAFT_MIRROR || !this.transport) return;
     const s = useRoom.getState();
     if (!s.game || !isPlayPhase(s.game.phase) || !myPlayer(s)) return;
+    if (s.game.players.length > DRAFT_MIRROR_MAX_PLAYERS) return;
     const send = () => {
       this.draftTimer = null;
       this.lastDraftAt = Date.now();
@@ -511,6 +570,3 @@ export class RoomClient {
   }
 }
 
-export function isActive(game: PublicGameState | null): boolean {
-  return !!game && isActivePhase(game.phase);
-}

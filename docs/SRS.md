@@ -841,3 +841,76 @@ These were not explicitly decided during requirements gathering. They are chosen
   excludes the lazy chunks: supabase-js, word lists, referee code, QR encoder and Motion features.
 - **NFR-1 / 3 / 5 / 9 and AC-1…AC-4** have not been measured on real devices or networks. Local-relay ack
   latency was ~16–30 ms on localhost, which says nothing about venue Wi-Fi.
+
+### Z.6 Visual palette change (2026-11-21, requested by the product owner)
+
+- **UI-4 palette replaced** by the VS Code **Tomorrow Night Blue** theme (taken from the theme file shipped with VS Code). Surfaces use its workbench colours (`#001733`, `#001c40`, `#002451`, `#00346e`, `#003f8e`, borders `#404f7d`). Accents use its syntax colours: correct = green `#d1f1a9`, present = orange `#ffc58f`, steal = red `#ff9da4`, shield = yellow `#ffeead`, accents = magenta `#ebbbff`, cyan `#99ffff` and blue `#bbdaff`.
+- **Absent letters were hard to tell apart.** On the board they are now solid blue-grey `#404f7d` tiles with white letters, clearly filled compared with the outlined empty slots. On the keyboard, keys still in play are pastel blue `#bbdaff` (a neutral pastel `#e3e7f1` in colour-blind mode) and absent keys go near-black `#001126` with readable `#8b9dcb` letters. That is a 13:1 difference, so used-up letters read as clearly switched off.
+- Pastel accents always carry dark navy text (9–15:1 contrast). Muted text uses the theme comment colour, lifted to `#8b9dcb` so that it stays at or above 4.5:1 on every surface (UI-13).
+- Status pills, mode buttons, chips, badges and info toasts are now solid pastels with dark text.
+- End-screen headlines are now solid theme colours: win green, **lose red `#ff9da4`** (replacing the rose-to-fuchsia gradient), draw yellow, spectator blue.
+- **UI-5 colour-blind mode:** correct = bright blue `#80baff`, present = orange `#ffc58f`, plus glyph markers.
+
+### Z.7 Responsive layout and light mode (2026-11-21, requested by the product owner)
+
+- **One-screen, fit-to-device layout** for the player and spectator views. These replace the fixed breakpoint sizing behind UI-1, UI-2 and UI-9.
+  - The board area is a CSS size container, and one tile size is computed from the space actually available (container-query units). The game therefore fits any phone, tablet, laptop or projector, in portrait or landscape, and re-fits live on resize or rotation. React supplies only the tallest board's row count and whether an ammo tray is showing.
+  - **Both boards are always the same size** (this replaces UI-2's "opponent board at 85% on phones"). Board headers have a fixed two-line height and boards no longer have footers, so the two boards line up row for row.
+  - Hints and FR-5.3 banners share one fixed-height status line above the keyboard instead of covering the boards. In-game toasts appear just above the keyboard.
+  - **Phone landscape** (height ≤ 540px) puts the boards on the left and the keyboard on the right. **Portrait tablets** use the compact layout (timer in the header). Landscape tablets and larger show the timer in a centre column.
+  - Keyboard keys flex to the available width, and their height follows the viewport height.
+  - The "→ name" tag on steal rows is hidden on narrow boards (the ⚔ marker and red frame remain). The shielded opponent board is dimmed instead of being covered by a large shield icon (UI-7).
+- **Light/dark toggle.** A sun/moon button sits in the room header and on the home page, next to the colour-blind toggle. The choice is stored in localStorage and applied before first paint. Dark pastel (Tomorrow Night Blue) remains the default because it is better on projectors.
+  - **Light pastel** is the inverse: soft pastel surfaces (`#e9f0fc` / `#f7f9ff`), slightly deeper pastel fills, and navy text (`#0f2550`).
+  - Because pastels are unreadable as text on a light surface, each accent has an `-ink` shade for accent-coloured text and lines: red `#c0304a`, gold `#8a6300`, green `#3d7a1c`, blue `#2d5ea6`, purple `#7b3fae`, teal `#1a6f76`. All of these, and all text on pastel fills, measure at or above 4.5:1.
+  - Keys still in play are pastel blue `#d3e2fa`. Ruled-out keys are slate `#56638c` with light letters.
+
+### Z.8 Bigger guess dictionary and new backgrounds (2026-11-21, requested by the product owner)
+
+- **Oxford English Dictionary: not used.** The OED is proprietary (Oxford University Press). It has no open or downloadable edition, its API is licensed, and scraping it would breach its terms.
+- **Valid-guess list: 17,501 five-letter words**, superseding the 11,193 in Z.1. It is the union of the largest permissively licensed English lists:
+  - **SCOWL at every size up to 95** ("very obscure"), in every spelling variant (American, British, British-ize, Canadian, Australian and their variant lists): 17,453 words;
+  - the public-domain **ENABLE** list, which adds 48 more (e.g. AIOLI, VOILA, MATHS, INTRO).
+  - Proper nouns, abbreviations and contractions are excluded.
+- **Secret answers are unchanged:** 2,014 common words (SCOWL ≤ 35, curated). Rare words are accepted as guesses but are never chosen as secrets, so every secret stays fair to guess. Unit tests check both properties.
+- **Download size:** the lazily loaded word-list chunk grows from about 26 KB to about 40 KB gzipped. It downloads while the lobby is showing, so the room page's initial load is unchanged.
+- **Backgrounds** (they switch with the light/dark toggle; the Tomorrow Night Blue navy is no longer used):
+  - **Dark:** dark navy pastel blue `#1f2c4d`, boards `#283a63`. Pastel accents are unchanged.
+  - **Light:** pastel baby sky blue `#cce7fa`, boards `#f5faff`. Unused keys are white with a soft border so they stand out on the blue. Light-mode accent text shades were darkened slightly so they stay at or above 4.5:1 on the bluer background (e.g. red `#b02a43`, gold `#7a5600`, green `#336b16`).
+
+### Z.9 Battle royale, 2–100 players (2026-11-21, requested by the product owner)
+
+Implements SRS §13 ("future work"), as amended below. **With 2 players nothing changes**: every duel rule and test above still holds.
+
+- **GR-1 replaced.**
+  - The host sets `maxPlayers` from 2 to 100 in the lobby (host-only, lobby-only).
+  - A match starts with **any** number of connected players from 2 up to the cap; the room does not need to be full. A host alone can never start.
+- **Late joiners.**
+  - Anyone who arrives during a match spectates it. There is no limit on spectators.
+  - Spectators who want to play take free seats (first come, up to the cap) when the host starts the next match, via **Rematch** or **Back to lobby**.
+  - `?watch=1` projector viewers are never promoted.
+  - **Rematch** drops players who left and is refused only when fewer than 2 people would play.
+- **Targets: amends §13's "one random target".**
+  - Each player gets a **personal random shortlist** (`targetOptions`) of up to `targetChoices` (3, a new setting) opponents and **chooses** whom to attack (`SET_TARGET`, validated by the referee).
+  - Shortlists only contain players still alive: never spectators, eliminated or shielded players, or the player themselves.
+  - Shortlists are balanced (least-exposed candidates first), best-effort unique (no two players get the identical set when avoidable; verified for 5, 8, 20 and 100 players), and stable: knocked-out or shielded options are replaced individually.
+  - A steal is valid against anyone on the stealer's shortlist. In a duel the shortlist is the opponent.
+- **Steals** knock the target out but do **not** end the match while more than one player is standing.
+- **Ending** (as §13): last one standing; everyone standing has solved (fewest rows, then earliest); generalised GR-28 (no unsolved player can beat the best solve); timeout and overtime as GR-30 to GR-34.
+  - `GameResult.standings` ranks every player: solvers by rows and time, then survivors, then eliminated players (most recently out first).
+  - New event: `TARGET_CHANGED`.
+- **Wire protocol.**
+  - `state` is now a compact snapshot (rows as tuples). The new `state_delta` carries only changed players and fields, with gap detection and resync.
+  - Broadcasts are batched every 100 ms when there are more than 2 players.
+  - Live typing (GR-8) is mirrored only in games of 4 or fewer.
+  - The relay routes `action` and `sync_request` to the host only.
+- **UI.** The arena bar holds the shortlist picker (click or keys 1–3), "N hunting you", and alive/shielded/out counts. The spectator view becomes an auto-fitting grid of every player. The end screen adds standings. Banners fire only for events that concern you.
+- **Measured:** 100 players (1 browser host + 99 bots) over the relay on localhost: ack p50 76 ms, p95 119 ms, 0 resyncs.
+- **Not measured:** a 100-player match on Supabase. Estimated to exceed free-tier Realtime quotas (README → "Battle royale scale").
+- **Recommendation:** turn unbeatable early finish off for big games. The lobby shows this tip.
+
+### Z.10 Colour-blind mode removed; one theme button (2026-11-21, requested by the product owner)
+
+- **UI-5 dropped.** The product owner removed colour-blind mode: the blue/orange palette, the ● / ◐ tile and key symbols, and its ◐ header button. This supersedes the UI-5 lines in Z.6 and Z.7.
+- **Why:** the ◐ button sat next to the sun/moon and read as a second theme switch ("one changes the background, the other the element colours").
+- **Now:** the header has a single sun/moon button, which switches the whole look (page background, boards, tiles, keys, text). The saved theme also sets the browser-chrome colour (`theme-color`) before first paint, so light mode no longer gets dark-navy phone status and address bars after a reload.

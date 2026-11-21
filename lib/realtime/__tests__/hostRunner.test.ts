@@ -5,6 +5,7 @@ import { testDictionary } from '@/lib/engine/__tests__/helpers';
 import { beatKey, HostRunner, stateKey } from '../hostRunner';
 import type { EventName, EventPayloads, PresenceMeta } from '../protocol';
 import type { RoomTransport, TransportStatus } from '../transport';
+import { applyDelta, decodeState, type WireDelta, type WireState } from '../wire';
 
 /** In-memory transport: records outbound messages and lets tests inject inbound ones. */
 class FakeTransport implements RoomTransport {
@@ -43,8 +44,30 @@ class FakeTransport implements RoomTransport {
     this.status = s;
     this.statusHandlers.forEach((h) => h(s));
   }
+  /**
+   * What a client following this channel would hold after each state message: full snapshots are
+   * decoded, deltas applied on top (exactly like RoomClient). Throws if a delta does not apply.
+   */
   states(): PublicGameState[] {
-    return this.sent.filter((m) => m.event === 'state').map((m) => m.payload as PublicGameState);
+    const out: PublicGameState[] = [];
+    let cur: PublicGameState | null = null;
+    for (const m of this.sent) {
+      if (m.event === 'state') cur = decodeState(m.payload as WireState);
+      else if (m.event === 'state_delta') {
+        const d = m.payload as WireDelta;
+        if (!cur) throw new Error('delta before any snapshot');
+        if (d.v === cur.version) continue; // heartbeat
+        const next = applyDelta(cur, d);
+        if (!next) throw new Error(`delta base ${d.base} does not apply to v${cur.version}`);
+        cur = next;
+      } else continue;
+      out.push(cur);
+    }
+    return out;
+  }
+  /** Raw JSON of every state / delta message actually sent (for leak checks). */
+  rawStateMessages(): string[] {
+    return this.sent.filter((m) => m.event === 'state' || m.event === 'state_delta').map((m) => JSON.stringify(m.payload));
   }
   lastState(): PublicGameState {
     return this.states().at(-1)!;
@@ -148,6 +171,11 @@ describe('HostRunner (FIX 7: host-referee reliability)', () => {
         expect(json).not.toContain('"CRANE"');
         expect(json).not.toContain('"SLATE"');
       }
+    }
+    for (const raw of transport.rawStateMessages()) {
+      expect(raw).not.toContain('"secret"');
+      expect(raw).not.toContain('"CRANE"');
+      expect(raw).not.toContain('"SLATE"');
     }
     transport.deliver('action', { type: 'STEAL', playerId: HOST, targetId: GUEST, word: 'SLATE', clientSeq: 3 });
     expect(transport.lastState().phase).toBe('FINISHED');

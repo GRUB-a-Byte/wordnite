@@ -55,16 +55,21 @@ lives in a React component (FIX 2). Components call `RoomClient` methods and rea
 | `lib/engine/settings.ts` | `DEFAULT_SETTINGS`, `DEBUG_SETTINGS`, `validateSettings`, `resolveSettings` (FIX 3) |
 | `lib/engine/score.ts` | GR-16 two-pass tile scoring |
 | `lib/engine/secrets.ts` | GR-2 distinct secret selection (partial Fisher–Yates) |
-| `lib/engine/pairing.ts` | Who targets whom. 1.0 = "duel" pairing (FIX 2 extension point) |
+| `lib/engine/pairing.ts` | Who may attack whom: duel pairing, battle-royale shortlists (`assignTargets`), stealability |
 | `lib/engine/outcome.ts` | Win/draw evaluation GR-26…29 and timeout outcomes GR-30/33 |
 | `lib/engine/reducer.ts` | `reduce(state, action, {now, rng, dictionary})` — the referee |
+| `lib/engine/state.ts` | Lobby state plus the roster rules shared by referee and UI (`isBattleRoyale`, `nextMatchSize`, `playersStillHere`, `isWaitingForSeat`) |
 | `lib/engine/project.ts` | `toPublicState()` whitelist projection plus the `findLeakedSecrets()` tripwire (FIX 1) |
 | `lib/realtime/transport.ts` | `RoomTransport` interface, outbound queue while offline, transport selection |
 | `lib/realtime/supabaseTransport.ts` / `localTransport.ts` | Supabase Realtime and dev-relay implementations |
 | `lib/realtime/protocol.ts` | Event names and payload types, plus runtime validation of untrusted payloads |
+| `lib/realtime/wire.ts` | Compact wire encoding: full snapshots, deltas, gap detection |
 | `lib/realtime/hostRunner.ts` | Referee loop: FIFO dispatch, 250 ms TICK, presence diffing, persistence, broadcast |
 | `lib/client/roomClient.ts` | Per-page controller: input, client-side validation, pending/ack, clock offset, host-absence detection, draft mirroring |
 | `lib/client/store.ts` | Zustand store read by the UI |
+| `lib/client/players.ts` / `arenaLayout.ts` | Pure UI helpers: player lookups and counts; spectator-arena grid packing |
+| `lib/client/theme.ts` | Display preferences: storage keys, theme colours, the pre-paint `<head>` script |
+| `components/hooks.ts` | Shared React hooks: host-clock countdown, latest game event, element size, temporary flags |
 
 ## 3. Private vs public state (FIX 1)
 
@@ -96,8 +101,9 @@ by `playerId`, with payload `{ playerId, nickname, role: host|player|spectator, 
 
 | Event | Direction | Payload | Notes |
 |---|---|---|---|
-| `action` | client → host | `ClientAction` | `START`, `GUESS`, `STEAL`, `REMATCH`, `RETURN_TO_LOBBY`, `UPDATE_SETTINGS`. Each carries `playerId` and a per-player increasing `clientSeq`. Shape-validated by `parseClientAction()`; unknown fields are dropped. |
-| `state` | host → all | `PublicGameState` | Sent after every change, re-sent every 3 s during a match (Broadcast is at-most-once), and on `sync_request`. |
+| `action` | client → host | `ClientAction` | `START`, `GUESS`, `STEAL`, `SET_TARGET`, `REMATCH`, `RETURN_TO_LOBBY`, `UPDATE_SETTINGS`. Each carries `playerId` and a per-player increasing `clientSeq`. Shape-validated by `parseClientAction()`; unknown fields are dropped. |
+| `state` | host → all | full `WireState` (compact `PublicGameState`) | First sync, on `sync_request` / reconnect, and at least every 20 s. |
+| `state_delta` | host → all | `WireDelta` | Only what changed since the previous broadcast. Immediate in a duel, batched every 100 ms in bigger games. A clock-only heartbeat goes out every 3 s. A client whose version does not match `base` requests a full snapshot. |
 | `reject` | host → all | `{ playerId, clientSeq, reason }` | Clients filter by their own id. |
 | `draft` | player → all | `{ playerId, letters, mode, targetId, matchNumber }` | Live typing (GR-8). Throttled to ≤ 10/s, dropped while offline, never refereed. |
 | `sync_request` | client → host | `{ playerId }` | Sent on every (re)connect. Bursts are coalesced. |
@@ -253,30 +259,77 @@ long-lived worker; a Vercel Function alone cannot hold the match clock. Keep sec
 authenticate players with per-player tokens. The `PrivateGameState` / `PublicGameState` split and the pure
 reducer are already the shape such a move needs.
 
-## 10. Extension points for the future battle-royale release (FIX 2)
+## 10. Battle royale (2–100 players)
 
-The engine never refers to "player A/B" or to UI components. Players are records in an array, keyed by
-stable ids. To grow beyond a duel:
+Release 1.0 shipped as a duel. The engine was written over player arrays from the start, so the battle
+royale is the same reducer with a different pairing module and a lifted cap. **With 2 players
+everything behaves exactly like the duel**, and the full duel test suite still runs unchanged.
 
-| Extension | Where | What changes |
+| Piece | Where | Behaviour |
 |---|---|---|
-| N players | `settings.maxPlayers` + `validateSettings` | Lift the `max: 2` limit once the UI and outcome rules support N |
-| Target assignment | `lib/engine/pairing.ts` | Replace duel pairing with random alive, non-shielded targets (SRS §13) or bracket pairings; reassign on elimination/solve |
-| Win / ranking rules | `lib/engine/outcome.ts` | Generalised GR-28 and ranking (shielded by rows then time, then alive, then reverse elimination order); a steal no longer ends the match |
-| Knockout rounds / tournament | New module above the reducer (e.g. `lib/engine/tournament.ts`) | Run one duel `PrivateGameState` per pairing and advance winners; the duel reducer stays unchanged |
-| Server authority | `lib/realtime/hostRunner.ts` | Same `reduce()` + `toPublicState()`, hosted server-side; clients unchanged apart from the transport |
-| UI | `components/GameView.tsx` | Already renders "my board + my current target", so it needs a target switcher and a "New target" animation |
+| Player cap | `settings.maxPlayers` (2–100, `validateSettings`) | Host-only, lobby-only (`UPDATE_SETTINGS`). A match starts with **any** number of connected players from 2 up to the cap. A lone host can never start. Lowering the cap parks the newest non-host players as waiting spectators. |
+| Late joiners | `reducer.ts` `handleJoin` / `promoteSpectators` | Anyone arriving mid-match spectates it (spectators are unlimited). Waiting spectators take free seats, up to the cap, when the host returns to the lobby **or presses Rematch**. `?watch=1` projector viewers are never promoted. |
+| Attack shortlists | `pairing.ts` `assignTargets` | Every active player gets a personal random **shortlist of `settings.targetChoices` (3) opponents** (`targetOptions`). Candidates are other players who are still `alive`: never spectators, eliminated or shielded players, or yourself. Picks are balanced (least-exposed candidates first), best-effort unique (no two players share an identical set when the arena allows it), and stable: only invalid slots are refilled. With 2 players the shortlist is just the opponent. |
+| Choosing a target | `SET_TARGET` action → `targetId` | The player picks whom to attack from their shortlist (a picker in the arena bar, or keys 1–3). The UI switches instantly, and the referee records the choice, which drives the "N hunting you" counts. A steal is accepted against anyone on the stealer's shortlist (`isAssignedTarget`). The shield check runs before the shortlist check, so E-2's "Shielded!" still applies. |
+| Eliminations | `reducer.ts` `retarget()` | A successful steal knocks the target out and **the match continues**. After every status change (steal, out of rows, forfeit, solve), the affected shortlist slots are refilled, and a player whose chosen target is gone moves to another option (`TARGET_CHANGED` event, toast). |
+| Ending and placings | `outcome.ts` | The same rules, applied over N players: last one standing; everyone still standing has solved (fewest rows, then earliest); generalised GR-28; timeout and overtime. `finish()` attaches `result.standings`: solvers by rows and time, then survivors, then eliminated players (most recently out first). The winner is always placed 1st. |
+
+**UI.**
+- **Players** keep the two-board view (their own board plus their chosen target's), with an arena bar for the shortlist picker, "⚔ N hunting you", and alive/shielded/out counts.
+- **Spectators and the projector** get `ArenaGrid`: every player's mini board, packed live into whichever grid gives the largest tiles. Letters show once tiles are big enough, plus crown, shield and "out" markers.
+- **The end screen** shows your placing and a scrollable standings table with every secret word.
+- **Banners** fire only for events that concern you (your steals, being knocked out, a new best score), so 100 players do not drown the screen.
+
+**Network at scale** (see §4):
+- **Compact deltas.** Rows travel in a compact tuple form, and after the first full snapshot the host sends only what changed (`state_delta`, `lib/realtime/wire.ts`). Clients detect gaps and resync.
+- **Batching.** In games with more than 2 players, broadcasts are batched (one per 100 ms).
+- **Live typing** is mirrored only in games of 4 or fewer.
+- **Relay routing.** The dev and self-hosted relay delivers `action` and `sync_request` **only to the host**.
+
+**Measured** (`LOADTEST=1 npx playwright test e2e/load-100.spec.ts`: one real browser host plus 99 bot
+players through the local relay, on localhost):
+
+| Measure | Result |
+|---|---|
+| Guesses confirmed | 594 |
+| Confirmation latency | p50 76 ms, p95 119 ms |
+| Resyncs | 0 |
+| Per client | ~111 deltas + 4 full snapshots ≈ 1 MB over a 24 s match |
+| Referee cost | a full simulated 100-player match runs in ~0.4 ms per action (unit test) |
+
+**Supabase at 100 players (not measured).** On Supabase, every broadcast fans out to every subscriber,
+including `action` messages, which the relay routes to the host only. A 100-player match is therefore in
+the order of several hundred to a few thousand delivered messages per second. That is above the
+free-tier Realtime quota. Check your plan's limits, or self-host `scripts/relay.mjs` (README →
+"Battle royale scale").
+
+**Still future work:** knockout brackets and tournaments (several duels in parallel, winners
+advance). These would be a module above the reducer that runs one match per pairing.
 
 ## 11. Testing strategy
 
-- **Vitest (`npm test`, 114 tests):**
-  - `lib/engine`: every GR rule and SRS edge case, plus amendments (ordering, sequence numbers, leakage,
-    the early-finish toggle, determinism);
-  - `lib/realtime`: `HostRunner` against an in-memory transport (FIFO, presence diffing, persistence,
-    abandon, resync, hostile payloads) and protocol validation;
-  - `lib/client`: copy, keyboard colouring, ids, nicknames.
+- **Vitest (`npm test`, 161 tests):**
+  - `lib/engine`:
+    - every GR rule and SRS edge case, plus amendments (ordering, sequence numbers, leakage, the
+      early-finish toggle, determinism);
+    - the battle royale (`battleRoyale.test.ts`): cap, late joiners and rematch promotion, shortlists
+      (balance, uniqueness, stability, `SET_TARGET`), eliminations that do not end the match, every
+      way of ending, placings, and a full 100-player match with 100 unique shortlists.
+  - `lib/realtime`:
+    - `HostRunner` against an in-memory transport that replays snapshots and deltas exactly like a
+      client;
+    - the wire format: lossless round trip, exact delta rebuild, gap detection, and a guess costing
+      under 3 KB in a 100-player game;
+    - protocol validation.
+  - `lib/client`: copy, keyboard colouring, ids, nicknames, share links, spectator-arena layout, the
+    pre-paint theme script (light/dark restored with the matching browser-chrome colour).
+  - Test drivers: `lib/engine/__tests__/helpers.ts` (`EngineHarness`, with `Sim` for duels; the battle
+    royale `BrSim` extends it) and `e2e/helpers.ts` (room creation, joining, host-roster reads).
 - **Playwright (`npm run test:e2e`):** real browsers through the local relay.
-  - Two players and a spectator: mirroring (rows and live typing), invalid-word rejection, steal-row
-    styling, a winning steal, both end screens, rematch.
-  - A raw-WebSocket-frame secret-leak check.
-  - Guest refresh, host refresh, and "Room not found".
+  - Duel: two players and a spectator, with mirroring, invalid-word rejection, steal rows, a winning
+    steal, both end screens, rematch, and a raw-WebSocket-frame secret-leak check. Guest refresh, host
+    refresh, and "Room not found".
+  - Battle royale: a 10-player cap started with 4 players; the cap control is host-only; each player
+    picks from their own 3-option shortlist; a late joiner spectates; eliminations without the match
+    ending; standings on every screen; the late joiner plays the rematch.
+  - Opt-in 100-player load test (`LOADTEST=1`).

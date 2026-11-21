@@ -11,6 +11,40 @@ export function isPlayPhase(phase: Phase): boolean {
   return phase === 'PLAYING' || phase === 'OVERTIME';
 }
 
+/** A duel is exactly two players; anything bigger plays by the battle-royale rules (SRS addendum Z.9). */
+export function isBattleRoyale(playerCount: number): boolean {
+  return playerCount > 2;
+}
+
+/** A spectator still in the room who asked to play — in line for the next free seat. */
+export function isWaitingForSeat(sp: { connected: boolean; wantsToPlay: boolean }): boolean {
+  return sp.connected && sp.wantsToPlay;
+}
+
+/** Minimal shape shared by the private (referee) and public (client) game state. */
+interface RosterView {
+  hostId: string;
+  players: readonly { id: string; connected: boolean }[];
+  spectators: readonly { connected: boolean; wantsToPlay: boolean }[];
+  settings: { maxPlayers: number };
+}
+
+/** Players still in the room (the host always counts). */
+export function playersStillHere<P extends { id: string; connected: boolean }>(players: readonly P[], hostId: string): P[] {
+  return players.filter((p) => p.connected || p.id === hostId);
+}
+
+/**
+ * How many people the next match would have if the host started it now: players still here plus
+ * spectators waiting for a seat, capped at maxPlayers. The referee (REMATCH) and the end screen use
+ * this same rule, so the "Next match: N players" label is always what actually happens.
+ */
+export function nextMatchSize(s: RosterView): number {
+  const here = playersStillHere(s.players, s.hostId).length;
+  const waiting = s.spectators.filter(isWaitingForSeat).length;
+  return Math.min(s.settings.maxPlayers, here + waiting);
+}
+
 export function newPlayer(id: string, nickname: string, isHost: boolean, settings: GameSettings): PrivatePlayer {
   return {
     id,

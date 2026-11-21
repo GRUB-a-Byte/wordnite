@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikePublicState, parseClientAction, parseDraft, parsePresenceMeta } from '../protocol';
+import { looksLikeWireState, parseClientAction, parseDraft, parsePresenceMeta } from '../protocol';
 
 describe('wire protocol validation', () => {
   it('accepts well-formed client actions', () => {
@@ -68,7 +68,7 @@ describe('wire protocol validation', () => {
   });
 
   it('recognises public state snapshots', () => {
-    expect(looksLikePublicState({ version: 1, roomCode: 'ABCD', hostId: 'h', phase: 'LOBBY', players: [] })).toBe(true);
-    expect(looksLikePublicState({ version: '1' })).toBe(false);
+    expect(looksLikeWireState({ version: 1, roomCode: 'ABCD', hostId: 'h', phase: 'LOBBY', players: [] })).toBe(true);
+    expect(looksLikeWireState({ version: '1' })).toBe(false);
   });
 });
