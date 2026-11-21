@@ -13,10 +13,10 @@ export function HowToPlay({ compact = false, settings = DEFAULT_SETTINGS }: { co
   const rules: [string, string][] = [
     ['🎯', `You each get a secret ${settings.wordLength}-letter word. Green = right spot, orange = wrong spot, blue-grey = not in the word.`],
     royale
-      ? ['👀', `Battle royale: you get your own random shortlist of up to ${settings.targetChoices} opponents — pick whom to attack (keys 1–${settings.targetChoices}) and watch their board live.`]
+      ? ['👀', 'Battle royale: you’re paired with ONE random opponent — you fight only them, they fight only you, and you watch each other’s board live. With an odd number of players, one waits for the next free opponent.']
       : ['👀', 'You can see your opponent’s board live — and they can see yours.'],
     royale
-      ? ['⚔️', `STEAL your pick’s word to knock them out; knocked-out or shielded players are swapped off your shortlist for new ones. A steal costs one of your ${settings.baseRows} rows.`]
+      ? ['⚔️', `STEAL your opponent’s word to knock them out — then you’re paired with another free player. A steal costs one of your ${settings.baseRows} rows.`]
       : ['⚔️', `Tap their board to STEAL: guess THEIR word to knock them out. A steal costs one of your ${settings.baseRows} rows.`],
     [
       '🛡️',

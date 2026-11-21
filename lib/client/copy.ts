@@ -9,7 +9,7 @@ export const REJECT_TEXT: Record<RejectReason, string> = {
   duplicate_seq: 'Already sent',
   target_shielded: 'Shielded! They already solved their word',
   target_eliminated: 'Target already eliminated',
-  invalid_target: 'You can’t attack that board',
+  invalid_target: 'You can only attack your own opponent',
   no_ammo: 'Out of ammo',
   no_rows: 'No rows left',
   not_playing: 'Too late — the round is over',

@@ -1,6 +1,6 @@
 import { createRng } from '@/lib/engine/rng';
 import { DEBUG_SETTINGS, DEFAULT_SETTINGS, resolveSettings } from '@/lib/engine/settings';
-import { isActivePhase, isPlayPhase } from '@/lib/engine/state';
+import { isBattleRoyale, isPlayPhase } from '@/lib/engine/state';
 import type {
   ClientAction,
   DistributiveOmit,
@@ -23,7 +23,6 @@ import { loadDictionary } from '@/lib/words';
 import { REJECT_TEXT } from './copy';
 import { randomSeed } from './ids';
 import { loadSeq, saveSeq } from './identity';
-import { nicknameOf } from './players';
 import { markRevealed } from './revealed';
 import { initialRoomState, myPlayer, targetOf, useRoom, type InputMode, type Toast } from './store';
 
@@ -251,7 +250,7 @@ export class RoomClient {
 
     // New match (start / rematch): clear all input state.
     if (prevGame && pub.matchNumber !== prevGame.matchNumber) {
-      Object.assign(patch, { draft: '', pending: null, mode: 'own' as InputMode, drafts: {}, chosenTarget: null });
+      Object.assign(patch, { draft: '', pending: null, mode: 'own' as InputMode, drafts: {} });
     }
 
     useRoom.setState(patch);
@@ -269,13 +268,10 @@ export class RoomClient {
       useRoom.setState({ mode: 'steal' }); // FR-4.7: solved → steal mode by default
       return;
     }
-    // Battle royale: the opponent I was attacking dropped off my shortlist (knocked out / solved)
-    // and the referee moved me to another option. (Switching by my own choice shows no toast.)
-    const lost = prevMe?.targetId && !(me.targetOptions ?? []).includes(prevMe.targetId) && prevMe.targetId !== me.targetId;
-    if (lost && me.targetId) {
-      const prevName = nicknameOf(prevGame?.players ?? [], prevMe?.targetId, 'Your target');
-      if (s.mode === 'steal' && me.status === 'alive') useRoom.setState({ mode: 'own' });
-      this.toast(`🎯 ${prevName} is out of reach — now targeting ${target?.nickname ?? '?'}`, 'info');
+    // Battle royale: the referee paired me with a new opponent, or I'm waiting for a free one.
+    if (prevMe && prevMe.targetId !== me.targetId && isBattleRoyale(s.game.players.length) && me.status !== 'eliminated') {
+      if (s.mode === 'steal' && (me.status === 'alive' || !target)) useRoom.setState({ mode: 'own' });
+      this.toast(target ? `⚔ New opponent: ${target.nickname}` : '⏳ Waiting for a free opponent…', 'info');
       return;
     }
     if (s.mode === 'steal' && me.status === 'alive' && target && target.status !== 'alive') {
@@ -419,7 +415,7 @@ export class RoomClient {
     const target = targetOf(s);
     if (!s.game || !isPlayPhase(s.game.phase) || !me) return 'Not in play';
     if (me.status === 'eliminated') return 'You’re eliminated';
-    if (!target) return 'No target';
+    if (!target) return 'Waiting for an opponent';
     if (target.status === 'invulnerable') return `${target.nickname} is shielded`;
     if (target.status === 'eliminated') return `${target.nickname} is eliminated`;
     if (me.status === 'invulnerable' && me.postSolveStealRows <= 0) return 'Out of ammo';
@@ -442,28 +438,6 @@ export class RoomClient {
     }
     useRoom.setState({ mode }); // FR-4.3: the draft is kept when switching modes
     this.scheduleDraft();
-  }
-
-  /**
-   * Battle royale: attack this player from my shortlist. Shown instantly; the referee is told
-   * (SET_TARGET) so "hunting you" counts stay accurate. Steals name their target explicitly, so a
-   * steal sent before the referee confirms is still valid.
-   */
-  chooseTarget(targetId: string): void {
-    const s = useRoom.getState();
-    const me = myPlayer(s);
-    if (!me || !s.game || !isActivePhase(s.game.phase) || !(me.targetOptions ?? []).includes(targetId)) return;
-    useRoom.setState({ chosenTarget: targetId });
-    if (me.targetId !== targetId) this.sendAction({ type: 'SET_TARGET', targetId });
-    if (!this.stealBlockReason()) useRoom.setState({ mode: 'steal' }); // picking someone = ready to attack
-    this.scheduleDraft();
-  }
-
-  /** Keys 1–3 pick option 1–3 from the shortlist. */
-  chooseTargetIndex(index: number): void {
-    const me = myPlayer(useRoom.getState());
-    const id = me?.targetOptions?.[index];
-    if (id && (me?.targetOptions?.length ?? 0) > 1) this.chooseTarget(id);
   }
 
   toggleMode(): void {

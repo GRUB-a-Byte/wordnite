@@ -17,7 +17,6 @@ describe('GameSettings (FIX 3)', () => {
       guestGraceMs: 15000,
       hostGraceMs: 10000,
       maxPlayers: 2,
-      targetChoices: 3,
       enableUnbeatableEarlyFinish: true,
     });
     expect(settingsProblems({ ...DEFAULT_SETTINGS })).toEqual([]);

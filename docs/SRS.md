@@ -914,3 +914,12 @@ Implements SRS §13 ("future work"), as amended below. **With 2 players nothing 
 - **UI-5 dropped.** The product owner removed colour-blind mode: the blue/orange palette, the ● / ◐ tile and key symbols, and its ◐ header button. This supersedes the UI-5 lines in Z.6 and Z.7.
 - **Why:** the ◐ button sat next to the sun/moon and read as a second theme switch ("one changes the background, the other the element colours").
 - **Now:** the header has a single sun/moon button, which switches the whole look (page background, boards, tiles, keys, text). The saved theme also sets the browser-chrome colour (`theme-color`) before first paint, so light mode no longer gets dark-navy phone status and address bars after a reload.
+
+### Z.11 Symmetric opponent pairs replace the attack shortlist (2026-11-21, requested by the product owner)
+
+- **Supersedes the "Targets" part of Z.9.** The 3-option shortlist, the `SET_TARGET` action, the `targetOptions` field, the `targetChoices` setting, the picker and the "N hunting you" count are removed.
+- **Pairs are symmetric.** Every player fights exactly one opponent (`targetId`), and that opponent fights them back: if A's opponent is B, B's is A; if C's is D, D's is C. Nobody chooses. The referee assigns pairs automatically and at random (seeded, so a match replays identically).
+- **Odd numbers.** One player waits for an opponent. They keep solving their own word, and nobody can steal from them meanwhile.
+- **Re-pairing.** A pair lasts until one of the two is out. The survivor is paired at random with another free player, or waits until one is free. Free unsolved players are paired with each other first; a lone unsolved player may be paired with a solved player who still has free steal shots. In a battle royale, a pair in which neither player can steal from the other any more splits up so both can be paired again.
+- **Steals** are accepted only against your own opponent (`invalid_target` otherwise).
+- **Unchanged:** the duel (one pair for the whole match), shields and free steal shots, endings and standings, late joiners and the 2–100 cap.

@@ -55,7 +55,7 @@ function useBanner(): Banner | null {
       key: `solved-${solved.id}`,
       text: mine
         ? royale
-          ? 'Shielded! Use your steal shots on your target.'
+          ? 'Shielded! Use your steal shots on your opponent.'
           : 'Shielded! Hunt them down.'
         : royale
           ? `${who} leads — solved in ${n}. That’s the score to beat!`

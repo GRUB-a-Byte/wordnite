@@ -37,8 +37,6 @@ function usePhysicalKeyboard(client: RoomClient) {
         client.toggleMode();
       } else if (/^[a-zA-Z]$/.test(e.key)) {
         client.typeLetter(e.key);
-      } else if (/^[1-9]$/.test(e.key)) {
-        client.chooseTargetIndex(Number(e.key) - 1); // battle royale: pick from your shortlist
       }
     };
     window.addEventListener('keydown', onKey);
@@ -91,12 +89,12 @@ export function GameView() {
   let hint: React.ReactNode = null;
   const royale = isBattleRoyale(game.players.length);
   if (me.status === 'eliminated') hint = royale ? 'You’re out — watching the rest of the battle' : 'You’re out — watch the finish';
-  else if (royale && !target) hint = 'No targets left — survive!';
+  else if (royale && !target)
+    hint = me.status === 'alive' ? '⏳ Waiting for a free opponent — keep solving your word' : '🛡 You’re safe — no opponent left to attack';
   else if (me.status === 'invulnerable' && me.postSolveStealRows === 0) hint = 'Out of ammo — you’re shielded, sit tight';
   else if (target?.status === 'invulnerable') hint = `🛡 ${target.nickname} is shielded — keep solving your own word`;
   else if (stealBlocked && attacking) hint = stealBlocked;
   else if (attacking && target) hint = `⚔ Steal mode — type ${target.nickname}’s word · Esc to go back`;
-  else if (royale && (me.targetOptions?.length ?? 0) > 1) hint = `Guess your word · pick a target above (keys 1–${me.targetOptions?.length}) to steal`;
   else if (target && !stealBlocked) hint = `Guess your word · tap ${target.nickname}’s board (or Tab) to steal`;
 
   return (
@@ -144,7 +142,16 @@ export function GameView() {
               />
             ) : (
               <div className="board-pad flex w-[calc(var(--tile-size)*6.24)] shrink-0 flex-col items-center justify-center self-stretch rounded-2xl border border-dashed border-line text-center text-[length:var(--bh-name)] font-bold text-muted">
-                No targets — survive!
+                {me.status === 'alive' ? (
+                  <span data-testid="waiting-opponent">
+                    ⏳ Waiting for an opponent
+                    <span className="mt-1 block text-[length:var(--bh-meta)] font-semibold">
+                      You’ll be paired as soon as someone is free. Nobody can steal from you meanwhile.
+                    </span>
+                  </span>
+                ) : (
+                  'No opponent left — you’re safe'
+                )}
               </div>
             )}
           </div>

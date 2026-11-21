@@ -55,7 +55,7 @@ lives in a React component (FIX 2). Components call `RoomClient` methods and rea
 | `lib/engine/settings.ts` | `DEFAULT_SETTINGS`, `DEBUG_SETTINGS`, `validateSettings`, `resolveSettings` (FIX 3) |
 | `lib/engine/score.ts` | GR-16 two-pass tile scoring |
 | `lib/engine/secrets.ts` | GR-2 distinct secret selection (partial Fisher–Yates) |
-| `lib/engine/pairing.ts` | Who may attack whom: duel pairing, battle-royale shortlists (`assignTargets`), stealability |
+| `lib/engine/pairing.ts` | Who fights whom: random symmetric opponent pairs (`pairPlayers`), `isOpponent`, stealability |
 | `lib/engine/outcome.ts` | Win/draw evaluation GR-26…29 and timeout outcomes GR-30/33 |
 | `lib/engine/reducer.ts` | `reduce(state, action, {now, rng, dictionary})` — the referee |
 | `lib/engine/state.ts` | Lobby state plus the roster rules shared by referee and UI (`isBattleRoyale`, `nextMatchSize`, `playersStillHere`, `isWaitingForSeat`) |
@@ -101,7 +101,7 @@ by `playerId`, with payload `{ playerId, nickname, role: host|player|spectator, 
 
 | Event | Direction | Payload | Notes |
 |---|---|---|---|
-| `action` | client → host | `ClientAction` | `START`, `GUESS`, `STEAL`, `SET_TARGET`, `REMATCH`, `RETURN_TO_LOBBY`, `UPDATE_SETTINGS`. Each carries `playerId` and a per-player increasing `clientSeq`. Shape-validated by `parseClientAction()`; unknown fields are dropped. |
+| `action` | client → host | `ClientAction` | `START`, `GUESS`, `STEAL`, `REMATCH`, `RETURN_TO_LOBBY`, `UPDATE_SETTINGS`. Each carries `playerId` and a per-player increasing `clientSeq`. Shape-validated by `parseClientAction()`; unknown fields are dropped. |
 | `state` | host → all | full `WireState` (compact `PublicGameState`) | First sync, on `sync_request` / reconnect, and at least every 20 s. |
 | `state_delta` | host → all | `WireDelta` | Only what changed since the previous broadcast. Immediate in a duel, batched every 100 ms in bigger games. A clock-only heartbeat goes out every 3 s. A client whose version does not match `base` requests a full snapshot. |
 | `reject` | host → all | `{ playerId, clientSeq, reason }` | Clients filter by their own id. |
@@ -269,13 +269,13 @@ everything behaves exactly like the duel**, and the full duel test suite still r
 |---|---|---|
 | Player cap | `settings.maxPlayers` (2–100, `validateSettings`) | Host-only, lobby-only (`UPDATE_SETTINGS`). A match starts with **any** number of connected players from 2 up to the cap. A lone host can never start. Lowering the cap parks the newest non-host players as waiting spectators. |
 | Late joiners | `reducer.ts` `handleJoin` / `promoteSpectators` | Anyone arriving mid-match spectates it (spectators are unlimited). Waiting spectators take free seats, up to the cap, when the host returns to the lobby **or presses Rematch**. `?watch=1` projector viewers are never promoted. |
-| Attack shortlists | `pairing.ts` `assignTargets` | Every active player gets a personal random **shortlist of `settings.targetChoices` (3) opponents** (`targetOptions`). Candidates are other players who are still `alive`: never spectators, eliminated or shielded players, or yourself. Picks are balanced (least-exposed candidates first), best-effort unique (no two players share an identical set when the arena allows it), and stable: only invalid slots are refilled. With 2 players the shortlist is just the opponent. |
-| Choosing a target | `SET_TARGET` action → `targetId` | The player picks whom to attack from their shortlist (a picker in the arena bar, or keys 1–3). The UI switches instantly, and the referee records the choice, which drives the "N hunting you" counts. A steal is accepted against anyone on the stealer's shortlist (`isAssignedTarget`). The shield check runs before the shortlist check, so E-2's "Shielded!" still applies. |
-| Eliminations | `reducer.ts` `retarget()` | A successful steal knocks the target out and **the match continues**. After every status change (steal, out of rows, forfeit, solve), the affected shortlist slots are refilled, and a player whose chosen target is gone moves to another option (`TARGET_CHANGED` event, toast). |
+| Opponent pairs | `pairing.ts` `pairPlayers` | **Symmetric:** every player fights exactly ONE opponent (`targetId`), and opponents are mutual: if A's is B, B's is A (A↔B, C↔D, …). Nobody chooses. At match start the referee shuffles the players (seeded rng, so a match replays identically) and pairs them off. With an odd number, one player waits for an opponent: they keep solving their own word and nobody can steal from them. With 2 players it is the classic duel. |
+| Stealing | `reducer.ts` `handleSteal` → `isOpponent` | A steal is accepted only against your own opponent. The shield and eliminated checks run first, so E-2's "Shielded!" still applies. |
+| Re-pairing | `reducer.ts` `retarget()` → `pairPlayers` | A successful steal knocks the opponent out and **the match continues**. After every status change (steal, out of rows, forfeit, solve), pairs that still hold are kept. Free players are then paired at random: unsolved with unsolved first, then a lone unsolved player with a solved player who still has free steal shots. In a battle royale, a pair where neither can steal from the other any more (e.g. one solved and is out of shots) splits so both can be paired again. Changes emit `TARGET_CHANGED` (toast: "New opponent" or "Waiting for a free opponent"). Invariant, checked after every action of the 100-player test: pairs are always mutual. |
 | Ending and placings | `outcome.ts` | The same rules, applied over N players: last one standing; everyone still standing has solved (fewest rows, then earliest); generalised GR-28; timeout and overtime. `finish()` attaches `result.standings`: solvers by rows and time, then survivors, then eliminated players (most recently out first). The winner is always placed 1st. |
 
 **UI.**
-- **Players** keep the two-board view (their own board plus their chosen target's), with an arena bar for the shortlist picker, "⚔ N hunting you", and alive/shielded/out counts.
+- **Players** keep the two-board view (their own board plus their opponent's), with an arena bar naming "⚔ Your opponent" (or "waiting for a free opponent") and alive/shielded/out counts. While waiting, the opponent board is replaced by a "Waiting for an opponent" card.
 - **Spectators and the projector** get `ArenaGrid`: every player's mini board, packed live into whichever grid gives the largest tiles. Letters show once tiles are big enough, plus crown, shield and "out" markers.
 - **The end screen** shows your placing and a scrollable standings table with every secret word.
 - **Banners** fire only for events that concern you (your steals, being knocked out, a new best score), so 100 players do not drown the screen.
@@ -312,9 +312,11 @@ advance). These would be a module above the reducer that runs one match per pair
   - `lib/engine`:
     - every GR rule and SRS edge case, plus amendments (ordering, sequence numbers, leakage, the
       early-finish toggle, determinism);
-    - the battle royale (`battleRoyale.test.ts`): cap, late joiners and rematch promotion, shortlists
-      (balance, uniqueness, stability, `SET_TARGET`), eliminations that do not end the match, every
-      way of ending, placings, and a full 100-player match with 100 unique shortlists.
+    - the battle royale (`battleRoyale.test.ts`): cap, late joiners and rematch promotion, symmetric
+      pairs (mutual, one waits when odd, random per seed but replayable, steals only at your opponent,
+      re-pairing after steals, forfeits and stalled pairs), eliminations that do not end the match,
+      every way of ending, placings, and a full 100-player match that checks pairs stay mutual after
+      every action.
   - `lib/realtime`:
     - `HostRunner` against an in-memory transport that replays snapshots and deltas exactly like a
       client;
@@ -329,7 +331,7 @@ advance). These would be a module above the reducer that runs one match per pair
   - Duel: two players and a spectator, with mirroring, invalid-word rejection, steal rows, a winning
     steal, both end screens, rematch, and a raw-WebSocket-frame secret-leak check. Guest refresh, host
     refresh, and "Room not found".
-  - Battle royale: a 10-player cap started with 4 players; the cap control is host-only; each player
-    picks from their own 3-option shortlist; a late joiner spectates; eliminations without the match
-    ending; standings on every screen; the late joiner plays the rematch.
+  - Battle royale: a 10-player cap started with 4 players; the cap control is host-only; random mutual
+    pairs named on every screen; the first duel winner waits, then meets the other winner; a late joiner
+    spectates, then plays the rematch; standings on every screen.
   - Opt-in 100-player load test (`LOADTEST=1`).

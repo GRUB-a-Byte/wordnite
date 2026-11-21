@@ -5,8 +5,9 @@ yours to become **shielded**, or **steal** your opponent's word to knock them ou
 live, so every guess you make also hands your opponent clues.
 
 Play a **2-player duel** or a **battle royale of up to 100 players**. The host sets the player limit in the lobby, and any
-number from 2 up to that limit can start. In a battle royale, every player picks whom to attack from their own random
-shortlist of 3 opponents. People who arrive mid-match spectate and join the next match. A spectator/projector view shows
+number from 2 up to that limit can start. In a battle royale, the referee pairs everyone at random into mutual duels:
+you fight exactly one opponent, and they fight only you (A↔B, C↔D, …). Win your duel and you are paired with another
+winner. People who arrive mid-match spectate and join the next match. A spectator/projector view shows
 the whole arena.
 
 | Doc | What's in it |
@@ -78,8 +79,9 @@ npm run typecheck && npm run lint
   - host refresh / abandon
   - malformed payloads
 - **E2E (5, + an opt-in 100-player load test):**
-  - battle royale: start 4 players in a 10-player room, host-only cap control, per-player 3-option shortlist picker,
-    a late joiner spectates then plays the rematch, eliminations without the match ending, standings;
+  - battle royale: start 4 players in a 10-player room, host-only cap control, random mutual pairs shown on every
+    screen, the first duel winner waits and is then paired with the other winner, a late joiner spectates then plays
+    the rematch (5 players → one waits), standings;
   - create, join and spectate; live guess mirroring; steal-row styling; a winning steal; rematch
   - a check that the guest's raw WebSocket frames never contain an active secret
   - guest refresh and host refresh mid-match

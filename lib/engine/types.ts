@@ -28,8 +28,6 @@ export interface GameSettings {
   guestGraceMs: number; // GR-35
   hostGraceMs: number; // GR-36
   maxPlayers: number; // GR-1 — 2 (duel) … 100 (battle royale), host-configurable in the lobby
-  /** Battle royale: size of each player's random shortlist of opponents to choose from. */
-  targetChoices: number;
   /** GR-28 "unbeatable" early finish. FIX 5: isolated behind this flag for playtesting. */
   enableUnbeatableEarlyFinish: boolean;
 }
@@ -65,12 +63,10 @@ export interface PublicPlayer {
   eliminatedBy?: string; // stealer id
   eliminationReason?: EliminationReason;
   /**
-   * Battle royale: this player's personal shortlist of up to 3 opponents they may attack, drawn at
-   * random from players still alive (never spectators / eliminated / shielded / themselves). Each
-   * player gets their own random shortlist. In a duel it is simply the other player.
+   * This player's ONE opponent, assigned at random by the referee (pairing.ts). Pairs are mutual:
+   * if A's opponent is B, B's opponent is A. Unset while waiting for a free opponent. Eliminated
+   * players keep their last opponent.
    */
-  targetOptions?: string[];
-  /** The opponent this player has CHOSEN from targetOptions (whose board they see). */
   targetId?: string;
   /** Highest clientSeq the host has processed for this player (acts as the action ack, FIX 6). */
   lastSeq: number;
@@ -126,7 +122,7 @@ export type GameEvent =
   | { id: number; type: 'STEAL_HIT'; stealerId: string; targetId: string; rowId: string }
   | { id: number; type: 'ELIMINATED'; playerId: string; reason: EliminationReason }
   | { id: number; type: 'OVERTIME_START'; extraRows: number }
-  /** A player was given a new target (their previous one was stolen / ran out / solved). */
+  /** A player was paired with a new opponent (`targetId`), or is now waiting for one (unset). */
   | { id: number; type: 'TARGET_CHANGED'; playerId: string; targetId?: string }
   | { id: number; type: 'FINISHED'; result: GameResult };
 
@@ -181,8 +177,6 @@ export type ClientAction =
   | { type: 'GUESS'; playerId: string; word: string; clientSeq: number }
   | { type: 'STEAL'; playerId: string; targetId: string; word: string; clientSeq: number }
   | { type: 'REMATCH'; playerId: string; clientSeq: number }
-  /** Battle royale: pick whom to attack from your own shortlist (targetOptions). */
-  | { type: 'SET_TARGET'; playerId: string; clientSeq: number; targetId: string }
   | { type: 'RETURN_TO_LOBBY'; playerId: string; clientSeq: number }
   | { type: 'UPDATE_SETTINGS'; playerId: string; clientSeq: number; patch: Partial<GameSettings> };
 

@@ -1,5 +1,5 @@
 import { evaluateOutcome, rankPlayers, timeoutOutcome } from './outcome';
-import { assignTargets, isAssignedTarget } from './pairing';
+import { isOpponent, pairPlayers } from './pairing';
 import { scoreGuess } from './score';
 import { pickSecrets } from './secrets';
 import { InvalidSettingsError, resolveSettings } from './settings';
@@ -143,12 +143,13 @@ function finish(tx: Tx, result: GameResult, at: number): void {
 }
 
 /**
- * Battle royale: after any status change, players whose target was stolen / ran out / solved get a
- * new random target (pairing.ts). Not run once the match is over (targets freeze for the end screen).
+ * After any status change: players whose opponent is out (or who can no longer fight their
+ * opponent) are paired again, at random, with another free player — pairs stay mutual
+ * (pairing.ts). Not run once the match is over (pairs freeze for the end screen).
  */
 function retarget(tx: Tx): void {
   if (!isActivePhase(tx.s.phase)) return;
-  for (const id of assignTargets(tx.s.players, tx.ctx.rng, tx.s.settings.targetChoices)) {
+  for (const id of pairPlayers(tx.s.players, tx.ctx.rng)) {
     const pl = findPlayer(tx, id);
     emit(tx, { type: 'TARGET_CHANGED', playerId: id, targetId: pl?.targetId });
   }
@@ -365,8 +366,6 @@ function handleClientAction(tx: Tx, action: ClientAction): void {
       return handleRematch(tx, action, actor);
     case 'RETURN_TO_LOBBY':
       return handleReturnToLobby(tx, action, actor);
-    case 'SET_TARGET':
-      return handleSetTarget(tx, action, actor);
     case 'UPDATE_SETTINGS':
       return handleUpdateSettings(tx, action, actor);
   }
@@ -415,7 +414,7 @@ function handleSteal(tx: Tx, action: Extract<ClientAction, { type: 'STEAL' }>, p
   if (!target || target.id === p.id) return reject(tx, action, 'invalid_target');
   if (target.status === 'invulnerable') return reject(tx, action, 'target_shielded'); // GR-20, E-2
   if (target.status === 'eliminated') return reject(tx, action, 'target_eliminated'); // GR-20
-  if (!isAssignedTarget(s.players, p.id, target.id)) return reject(tx, action, 'invalid_target'); // not on your shortlist
+  if (!isOpponent(s.players, p.id, target.id)) return reject(tx, action, 'invalid_target'); // you only fight your own opponent
   const word = normalizeWord(action.word);
   if (!isWellFormed(word, s.settings.wordLength) || !ctx.dictionary.isValid(word)) {
     return reject(tx, action, 'invalid_word');
@@ -448,17 +447,6 @@ function handleSteal(tx: Tx, action: Extract<ClientAction, { type: 'STEAL' }>, p
   retarget(tx);
 }
 
-/** Battle royale: choose whom to attack from your own shortlist. */
-function handleSetTarget(tx: Tx, action: Extract<ClientAction, { type: 'SET_TARGET' }>, p: PrivatePlayer): void {
-  if (!isActivePhase(tx.s.phase)) return reject(tx, action, 'not_playing');
-  if (p.status === 'eliminated') return reject(tx, action, 'eliminated');
-  if (!(p.targetOptions ?? []).includes(action.targetId)) return reject(tx, action, 'invalid_target');
-  if (p.targetId !== action.targetId) {
-    p.targetId = action.targetId;
-    tx.changed = true;
-  }
-}
-
 function canStartMatch(s: PrivateGameState): boolean {
   const n = s.players.length;
   return n >= 2 && n <= s.settings.maxPlayers && s.players.every((p) => p.connected);
@@ -470,7 +458,7 @@ function startMatch(tx: Tx): void {
   s.matchNumber += 1;
   s.rowCounter = 0;
   s.players.forEach((p, i) => resetPlayerForMatch(p, s.settings, secrets[i] as string)); // GR-3
-  assignTargets(s.players, ctx.rng, s.settings.targetChoices, true); // battle royale: random, balanced shortlists
+  pairPlayers(s.players, ctx.rng, true); // random symmetric pairs: A↔B, C↔D, … (odd one out waits)
   s.phase = 'COUNTDOWN'; // GR-4
   s.phaseEndsAt = ctx.now + s.settings.countdownMs;
   s.overtimeUsed = false;
@@ -519,7 +507,6 @@ function handleReturnToLobby(
   for (const pl of s.players) {
     resetPlayerForMatch(pl, s.settings, '');
     delete pl.targetId;
-    delete pl.targetOptions;
   }
   tx.changed = true;
   promoteSpectators(tx);

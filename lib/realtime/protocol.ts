@@ -63,7 +63,6 @@ const SETTINGS_KEYS: readonly (keyof GameSettings)[] = [
   'guestGraceMs',
   'hostGraceMs',
   'maxPlayers',
-  'targetChoices',
   'enableUnbeatableEarlyFinish',
 ];
 
@@ -77,8 +76,6 @@ export function parseClientAction(raw: unknown): ClientAction | null {
       return { type: raw.type, ...base };
     case 'GUESS':
       return isWord(raw.word) ? { type: 'GUESS', ...base, word: raw.word } : null;
-    case 'SET_TARGET':
-      return isId(raw.targetId) ? { type: 'SET_TARGET', ...base, targetId: raw.targetId } : null;
     case 'STEAL':
       return isWord(raw.word) && isId(raw.targetId)
         ? { type: 'STEAL', ...base, word: raw.word, targetId: raw.targetId }

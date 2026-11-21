@@ -52,7 +52,6 @@ export interface HostPlayer {
   secret: string;
   status: string;
   targetId?: string;
-  targetOptions?: string[];
 }
 
 /** The referee's private roster (incl. secrets), read through the HOST page's debug hook. */
@@ -68,7 +67,6 @@ export async function hostRoster(host: Page): Promise<{ hostId: string; players:
         secret: p.secret,
         status: p.status,
         targetId: p.targetId,
-        targetOptions: p.targetOptions,
       })),
     };
   });
