@@ -62,6 +62,7 @@ export function toPublicPlayer(p: PrivatePlayer): PublicPlayer {
     eliminatedAt: p.eliminatedAt,
     eliminatedBy: p.eliminatedBy,
     eliminationReason: p.eliminationReason,
+    targetOptions: p.targetOptions ? [...p.targetOptions] : undefined,
     targetId: p.targetId,
     lastSeq: p.lastSeq,
   };

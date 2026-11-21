@@ -2,13 +2,11 @@ import type { TileState } from '@/lib/engine/types';
 
 export type TileLook = 'empty' | 'typed' | 'ghost' | 'pending' | TileState;
 
-const GLYPH: Partial<Record<TileLook, string>> = { correct: '●', present: '◐' };
-
 const LOOK: Record<TileLook, string> = {
-  empty: 'border-line/80 bg-[var(--tile-empty)]',
-  typed: 'border-[#6b7db0] bg-[var(--tile-empty)] text-ink',
+  empty: 'border-[var(--tile-border)] bg-[var(--tile-empty)]',
+  typed: 'border-comment bg-[var(--tile-empty)] text-ink',
   ghost: 'border-line bg-[var(--tile-empty)] text-muted/70',
-  pending: 'border-[#6b7db0] bg-[var(--tile-empty)] text-ink pending-pulse',
+  pending: 'border-comment bg-[var(--tile-empty)] text-ink pending-pulse',
   correct: 'tile-correct',
   present: 'tile-present',
   absent: 'tile-absent',
@@ -44,11 +42,6 @@ export function Tile({
       style={flipDelayMs !== undefined ? ({ '--delay': `${flipDelayMs}ms` } as React.CSSProperties) : undefined}
     >
       {letter ?? ''}
-      {GLYPH[look] && (
-        <span aria-hidden className="cb-glyph absolute top-0.5 right-1 text-[0.4em] leading-none">
-          {GLYPH[look]}
-        </span>
-      )}
     </div>
   );
 }

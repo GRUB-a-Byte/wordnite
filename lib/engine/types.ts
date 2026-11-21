@@ -27,7 +27,9 @@ export interface GameSettings {
   overtimeMs: number; // GR-31
   guestGraceMs: number; // GR-35
   hostGraceMs: number; // GR-36
-  maxPlayers: number; // GR-1 (2 in release 1.0)
+  maxPlayers: number; // GR-1 — 2 (duel) … 100 (battle royale), host-configurable in the lobby
+  /** Battle royale: size of each player's random shortlist of opponents to choose from. */
+  targetChoices: number;
   /** GR-28 "unbeatable" early finish. FIX 5: isolated behind this flag for playtesting. */
   enableUnbeatableEarlyFinish: boolean;
 }
@@ -62,7 +64,13 @@ export interface PublicPlayer {
   eliminatedAt?: number;
   eliminatedBy?: string; // stealer id
   eliminationReason?: EliminationReason;
-  /** Opponent whose board this player sees / can steal from (pairing module; N-player ready). */
+  /**
+   * Battle royale: this player's personal shortlist of up to 3 opponents they may attack, drawn at
+   * random from players still alive (never spectators / eliminated / shielded / themselves). Each
+   * player gets their own random shortlist. In a duel it is simply the other player.
+   */
+  targetOptions?: string[];
+  /** The opponent this player has CHOSEN from targetOptions (whose board they see). */
   targetId?: string;
   /** Highest clientSeq the host has processed for this player (acts as the action ack, FIX 6). */
   lastSeq: number;
@@ -94,11 +102,19 @@ export type OutcomeReason =
   | 'all_eliminated'
   | 'abandoned';
 
+export interface Standing {
+  playerId: string;
+  /** 1 = winner. */
+  place: number;
+}
+
 export interface GameResult {
   outcome: 'win' | 'draw' | 'abandoned';
   winnerId?: string;
   loserId?: string;
   reason: OutcomeReason;
+  /** Final placings of every player (battle royale; also filled for duels). */
+  standings?: Standing[];
 }
 
 export type GameEvent =
@@ -110,10 +126,15 @@ export type GameEvent =
   | { id: number; type: 'STEAL_HIT'; stealerId: string; targetId: string; rowId: string }
   | { id: number; type: 'ELIMINATED'; playerId: string; reason: EliminationReason }
   | { id: number; type: 'OVERTIME_START'; extraRows: number }
+  /** A player was given a new target (their previous one was stolen / ran out / solved). */
+  | { id: number; type: 'TARGET_CHANGED'; playerId: string; targetId?: string }
   | { id: number; type: 'FINISHED'; result: GameResult };
 
 /** Distributive Omit so each GameEvent variant keeps its own fields. */
-export type GameEventInput = GameEvent extends infer E ? (E extends GameEvent ? Omit<E, 'id'> : never) : never;
+/** Omit that distributes over a union, so each variant keeps its own fields. */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+export type GameEventInput = DistributiveOmit<GameEvent, 'id'>;
 
 interface GameStateBase {
   roomCode: string;
@@ -160,6 +181,8 @@ export type ClientAction =
   | { type: 'GUESS'; playerId: string; word: string; clientSeq: number }
   | { type: 'STEAL'; playerId: string; targetId: string; word: string; clientSeq: number }
   | { type: 'REMATCH'; playerId: string; clientSeq: number }
+  /** Battle royale: pick whom to attack from your own shortlist (targetOptions). */
+  | { type: 'SET_TARGET'; playerId: string; clientSeq: number; targetId: string }
   | { type: 'RETURN_TO_LOBBY'; playerId: string; clientSeq: number }
   | { type: 'UPDATE_SETTINGS'; playerId: string; clientSeq: number; patch: Partial<GameSettings> };
 

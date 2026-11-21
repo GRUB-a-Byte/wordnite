@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { isBattleRoyale } from '@/lib/engine/state';
 import type { GameEvent, PresenceRole, PublicGameState, PublicPlayer } from '@/lib/engine/types';
 import type { DraftPayload, PresenceMeta } from '@/lib/realtime/protocol';
 import type { TransportStatus } from '@/lib/realtime/transport';
@@ -49,6 +50,8 @@ export interface RoomState {
   clockOffset: number;
 
   mode: InputMode;
+  /** Battle royale: the option I just picked (shown instantly, before the referee confirms SET_TARGET). */
+  chosenTarget: string | null;
   draft: string;
   pending: PendingSubmission | null;
   /** Increments to trigger the invalid-row shake. */
@@ -77,6 +80,7 @@ export const initialRoomState = (): RoomState => ({
   game: null,
   clockOffset: 0,
   mode: 'own',
+  chosenTarget: null,
   draft: '',
   pending: null,
   shake: 0,
@@ -97,11 +101,16 @@ export function myPlayer(s: Pick<RoomState, 'game' | 'me'>): PublicPlayer | unde
   return s.game?.players.find((p) => p.id === s.me);
 }
 
-export function targetOf(s: Pick<RoomState, 'game' | 'me'>): PublicPlayer | undefined {
+export function targetOf(s: Pick<RoomState, 'game' | 'me'> & Partial<Pick<RoomState, 'chosenTarget'>>): PublicPlayer | undefined {
   const me = myPlayer(s);
   if (!s.game) return undefined;
+  // My own pick from my shortlist wins (until it leaves the shortlist), then the referee's choice.
+  if (me && s.chosenTarget && me.targetOptions?.includes(s.chosenTarget)) {
+    return s.game.players.find((p) => p.id === s.chosenTarget);
+  }
   if (me?.targetId) return s.game.players.find((p) => p.id === me.targetId);
-  return s.game.players.find((p) => p.id !== s.me);
+  // Duel (or lobby): the only other player. A battle royale target only ever comes from the host.
+  return isBattleRoyale(s.game.players.length) ? undefined : s.game.players.find((p) => p.id !== s.me);
 }
 
 export function hostNow(s: Pick<RoomState, 'clockOffset'>): number {

@@ -1,57 +1,141 @@
 @import 'tailwindcss';
 
-/* ------------------------------------------------------------------------------------------------
- * Word Royale design tokens (UI-4). Original palette — deliberately NOT the NYT green/yellow/grey.
- * ---------------------------------------------------------------------------------------------- */
+/* ================================================================================================
+ * Word Royale design tokens (UI-4) — two pastel themes, switched by the sun/moon toggle.
+ *
+ *  - DARK (default, best on projectors): dark navy pastel-blue background, slightly lighter navy
+ *    boards, pastel accents (originally from VS Code Tomorrow Night Blue's syntax colours). Pastels
+ *    are light enough to double as text colours.
+ *  - LIGHT ([data-theme='light']): pastel baby-sky-blue background, near-white boards, slightly
+ *    deeper pastel fills, navy text. Pastels are too light for text on a light surface, so every
+ *    accent also has an "-ink" shade for accent-coloured TEXT and LINES (all >= 4.5:1).
+ *
+ * Rule of thumb in components:  bg-<accent> + text-on-accent   |   text-<accent>-ink / border-<accent>-ink
+ * Contrast notes: docs/SRS.md addendum Z.6 – Z.8.
+ * ============================================================================================== */
 @theme {
-  --color-night: #070b18;
-  --color-panel: #10172e;
-  --color-panel-2: #18213f;
-  --color-line: #2a3557;
-  --color-ink: #e6ebf5;
-  --color-muted: #94a3c4;
+  --color-night: var(--c-night);
+  --color-panel: var(--c-panel);
+  --color-panel-2: var(--c-panel-2);
+  --color-line: var(--c-line);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-comment: var(--c-comment);
+  --color-on-accent: var(--c-on-accent);
+
   --color-correct: var(--tile-correct);
   --color-present: var(--tile-present);
   --color-absent: var(--tile-absent);
-  --color-steal: #f43f5e;
-  --color-shield: #fbbf24;
-  --color-royal: #8b5cf6;
-  --color-royal-2: #22d3ee;
+  --color-steal: var(--c-steal);
+  --color-shield: var(--c-shield);
+  --color-royal: var(--c-royal);
+  --color-royal-2: var(--c-royal-2);
+  --color-blue: var(--c-blue);
+
+  --color-correct-ink: var(--c-correct-ink);
+  --color-present-ink: var(--c-present-ink);
+  --color-steal-ink: var(--c-steal-ink);
+  --color-shield-ink: var(--c-shield-ink);
+  --color-royal-ink: var(--c-royal-ink);
+  --color-royal-2-ink: var(--c-royal-2-ink);
+  --color-blue-ink: var(--c-blue-ink);
+
   --font-display: 'Trebuchet MS', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
 }
 
+/* ---- DARK: dark navy pastel blue --------------------------------------------------------------- */
 :root {
-  --tile-correct: #14b8a6; /* teal */
-  --tile-present: #f59e0b; /* amber */
-  --tile-absent: #475569; /* slate */
-  --tile-empty: #0d1428;
-  --tile-border: #2a3557;
-  --tile: clamp(24px, min(7.6vw, 4.9vh), 58px);
-  --tile-gap: clamp(3px, 0.8vw, 6px);
-  /* Vertical space NOT available to boards (header + board chrome + keyboard). Boards shrink their
-     tiles to fit the viewport via --fit, so the keyboard never gets pushed off-screen. */
-  --chrome: 350px;
-  --chrome-spectator: 230px;
+  --c-night: #1f2c4d; /* main background — dark navy pastel blue */
+  --c-panel: #283a63; /* boards / cards (a touch lighter so they lift off the page) */
+  --c-panel-2: #314673; /* raised rows / list items */
+  --c-line: #50628f;
+  --c-ink: #f4f7ff;
+  --c-muted: #a9b8dd;
+  --c-comment: #8899c4;
+  --c-on-accent: #1b2543; /* text on pastel fills */
+
+  --c-steal: #ff9da4;
+  --c-shield: #ffeead;
+  --c-royal: #ebbbff;
+  --c-royal-2: #99ffff;
+  --c-blue: #bbdaff;
+  /* On a dark surface the pastels themselves are readable text colours. */
+  --c-correct-ink: var(--tile-correct);
+  --c-present-ink: #ffc58f;
+  --c-steal-ink: #ff9da4;
+  --c-shield-ink: #ffeead;
+  --c-royal-ink: #ebbbff;
+  --c-royal-2-ink: #99ffff;
+  --c-blue-ink: #bbdaff;
+
+  --tile-correct: #d1f1a9;
+  --tile-present: #ffc58f;
+  --tile-absent: #56689a;
+  --tile-absent-fg: #ffffff;
+  --tile-empty: #1b2745; /* recessed slot */
+  --tile-border: #3d4f7c;
+  --key-bg: #bbdaff; /* keys still in play */
+  --key-border: transparent;
+  --key-absent-bg: #131c33; /* letters ruled out */
+  --key-absent-fg: #9fb0d8;
+  --crack: rgb(255 255 255 / 0.2);
+  --elim-filter: grayscale(1) brightness(0.75);
+  --bg-glow-1: color-mix(in srgb, #bbdaff 11%, transparent);
+  --bg-glow-2: color-mix(in srgb, #ebbbff 8%, transparent);
   color-scheme: dark;
 }
 
-/* UI-5 colour-blind mode: high-contrast blue / orange + glyph markers. */
-:root[data-cb='1'] {
-  --tile-correct: #2563eb;
-  --tile-present: #f97316;
-  --tile-absent: #3f4654;
+/* ---- LIGHT: pastel baby sky blue --------------------------------------------------------------- */
+:root[data-theme='light'] {
+  --c-night: #cce7fa; /* main background — pastel baby sky blue */
+  --c-panel: #f5faff; /* boards / cards */
+  --c-panel-2: #e0f0fc;
+  --c-line: #a8c6e2;
+  --c-ink: #0f2550;
+  --c-muted: #44587e;
+  --c-comment: #6377a0;
+  --c-on-accent: #0f2550;
+
+  --c-steal: #ff8f9b;
+  --c-shield: #ffe17a;
+  --c-royal: #d9a8f2;
+  --c-royal-2: #7fe0e0;
+  --c-blue: #9fc3f5;
+  --c-correct-ink: #336b16;
+  --c-present-ink: #944a00;
+  --c-steal-ink: #b02a43;
+  --c-shield-ink: #7a5600;
+  --c-royal-ink: #7b3fae;
+  --c-royal-2-ink: #155f66;
+  --c-blue-ink: #2d5ea6;
+
+  --tile-correct: #a6d88a;
+  --tile-present: #ffb36e;
+  --tile-absent: #6f7eab;
+  --tile-absent-fg: #ffffff;
+  --tile-empty: #ffffff;
+  --tile-border: #bdd6ed;
+  --key-bg: #ffffff; /* white keys stand out on the baby-blue page */
+  --key-border: #a8c6e2;
+  --key-absent-bg: #56638c;
+  --key-absent-fg: #e4eaf7;
+  --crack: rgb(15 37 80 / 0.25);
+  --elim-filter: grayscale(1) opacity(0.75);
+  --bg-glow-1: color-mix(in srgb, #ffffff 45%, transparent);
+  --bg-glow-2: color-mix(in srgb, #ebbbff 18%, transparent);
+  color-scheme: light;
 }
 
-@media (min-width: 768px) {
-  :root {
-    --tile: clamp(40px, min(4.2vw, 5.6vh), 62px);
-    --chrome: 380px;
-  }
-}
-
-/* UI-9 projector mode */
-:root[data-big='1'] {
-  --tile: clamp(40px, min(6.3vw, 7vh), 92px);
+/* ---- Sizing tokens ----------------------------------------------------------------------------- */
+:root {
+  /* Fallback tile size outside the fit system (lobby, end screen). */
+  --tile: clamp(24px, min(7.6vw, 4.9vh), 58px);
+  /* Board header (2 fixed lines → both boards always have identical headers, so rows align). */
+  --bh: clamp(34px, 5.4vmin, 48px);
+  --bh-name: clamp(11px, 1.9vmin, 17px);
+  --bh-meta: clamp(10px, 1.5vmin, 14px);
+  /* On-screen keyboard key height. */
+  --key-h: clamp(38px, 6.2dvh, 56px);
 }
 
 html,
@@ -65,15 +149,121 @@ body {
 
 body {
   background-image:
-    radial-gradient(1200px 600px at 10% -10%, rgb(139 92 246 / 0.18), transparent 60%),
-    radial-gradient(900px 500px at 110% 10%, rgb(34 211 238 / 0.12), transparent 60%);
+    radial-gradient(1200px 600px at 10% -10%, var(--bg-glow-1), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, var(--bg-glow-2), transparent 60%);
   background-attachment: fixed;
   min-height: 100dvh;
+  transition:
+    background-color 200ms,
+    color 200ms;
 }
 
-/* ------------------------------------------------------------------------------------------------
- * Tiles
- * ---------------------------------------------------------------------------------------------- */
+/* ================================================================================================
+ * Responsive fit system.
+ *
+ * Game + spectator screens are exactly one viewport tall. The board area (.fit-area) is a CSS size
+ * container; .fit-row computes ONE tile size from the space it actually has (container query
+ * units), so both boards are always the same size and fit any phone / tablet / laptop / projector,
+ * in portrait or landscape, and re-fit live on resize/rotation. React only supplies how many rows
+ * the tallest board has (--rows-u) and whether an ammo tray is showing (--has-tray).
+ *
+ *   board width  = 5 tiles + 4 gaps(0.1t) + 2 side pads(0.42t) = 6.24t (+2px border)
+ *   board height = header + pads + rows(t + 0.1t gaps) [+ tray]
+ * ============================================================================================== */
+.fit-area {
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+}
+.fit-row {
+  --row-gap: clamp(6px, 1.5vmin, 28px);
+  --pad-y: clamp(6px, 1vmin, 12px);
+  --head-gap: 6px;
+  --tray-chrome: 36px;
+  --chrome-v: calc(var(--bh) + 2 * var(--pad-y) + var(--head-gap) + 2px + 12px + var(--has-tray, 0) * var(--tray-chrome));
+  --chrome-h: calc(var(--row-gap) + 4px + 16px);
+  --cols-u: 12.48;
+  --tile-min: 14px;
+  --tile-max: 68px;
+  --tile-size: clamp(
+    var(--tile-min),
+    min((100cqh - var(--chrome-v)) / var(--rows-u, 6.5), (100cqw - var(--chrome-h)) / var(--cols-u)),
+    var(--tile-max)
+  );
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--row-gap);
+  padding-block: 6px;
+}
+.fit-row[data-kind='spectator'] {
+  --bh: clamp(38px, 6.4vmin, 76px);
+  --bh-name: clamp(12px, 2.5vmin, 28px);
+  --bh-meta: clamp(10px, 1.9vmin, 21px);
+  --vs-w: 0px;
+  --chrome-h: calc(var(--vs-w) + 2 * var(--row-gap) + 4px + 16px);
+  --tile-max: 120px;
+}
+:root[data-big='1'] .fit-row[data-kind='spectator'] {
+  --tile-max: 160px;
+}
+@media (min-width: 600px) {
+  .fit-row[data-kind='spectator'] {
+    --vs-w: clamp(36px, 5vw, 96px);
+  }
+}
+.vs-col {
+  width: var(--vs-w);
+  align-self: center;
+  text-align: center;
+  font-size: calc(var(--vs-w) * 0.55);
+}
+
+/* "Wide" = landscape tablet / laptop / monitor: the timer gets its own column between the boards.
+ * Portrait tablets stay "compact" (timer in the header) so the boards get the full width. */
+.only-wide {
+  display: none;
+}
+@media (min-width: 900px) and (min-height: 541px) {
+  .only-wide {
+    display: flex;
+  }
+  .only-compact {
+    display: none;
+  }
+  .fit-row[data-kind='player'] {
+    --chrome-h: calc(9.5rem + 2 * var(--row-gap) + 4px + 32px);
+  }
+}
+.center-col {
+  width: 9.5rem;
+}
+
+/* Phone in landscape: boards on the left, keyboard dock on the right. */
+@media (orientation: landscape) and (max-height: 540px) {
+  .game-main {
+    flex-direction: row;
+  }
+  .game-dock {
+    width: min(48vw, 32rem);
+    justify-content: center;
+    padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+  }
+  :root {
+    --key-h: clamp(28px, 10.5dvh, 42px);
+    --bh: clamp(30px, 8vmin, 40px);
+  }
+  .room-header {
+    padding-block: 0.25rem;
+  }
+}
+
+/* ================================================================================================
+ * Tiles & keys
+ * ============================================================================================== */
 .tile {
   width: var(--tile-size, var(--tile));
   height: var(--tile-size, var(--tile));
@@ -81,51 +271,72 @@ body {
   border-radius: calc(var(--tile-size, var(--tile)) * 0.12);
   position: relative;
 }
-
-.board-mine {
-  --tile-size: min(var(--tile), var(--fit, 999px));
+.tile-gap {
+  gap: calc(var(--tile-size, var(--tile)) * 0.1);
 }
-/* UI-2: the opponent board is rendered at 85% on phones; equal size on desktop. */
-.board-opp {
-  --tile-size: calc(min(var(--tile), var(--fit, 999px)) * 0.85);
-}
-@media (min-width: 768px) {
-  .board-opp {
-    --tile-size: min(var(--tile), var(--fit, 999px));
-  }
-}
-.board-large {
-  --tile-size: min(clamp(30px, min(6.6vw, 6.2vh), 84px), var(--fit, 999px));
-}
-:root[data-big='1'] .board-large {
-  --tile-size: min(clamp(40px, min(8.5vw, 7.4vh), 120px), var(--fit, 999px));
+.board-pad {
+  padding-inline: calc(var(--tile-size, var(--tile)) * 0.42);
+  padding-block: var(--pad-y, 8px);
 }
 .board-end {
-  --tile-size: clamp(22px, min(6vw, 3.6vh), 44px);
+  --tile-size: clamp(20px, min(5.8vw, 3.6vh), 44px);
 }
-
-/* UI-5 glyph markers, only in colour-blind mode */
-.cb-glyph {
-  display: none;
+/* The "→ name" tag on steal rows is redundant in a duel (the ⚔ + red frame already say it) and
+ * covers letters on small boards — only show it when there is room. */
+@container (max-width: 720px) {
+  .steal-label {
+    display: none;
+  }
 }
-:root[data-cb='1'] .cb-glyph {
-  display: block;
+@media (max-width: 640px) {
+  .board-end .steal-label {
+    display: none;
+  }
 }
 
 .tile-correct {
   background: var(--tile-correct);
   border-color: var(--tile-correct);
-  color: #fff;
+  color: var(--c-on-accent);
 }
 .tile-present {
   background: var(--tile-present);
   border-color: var(--tile-present);
-  color: #1a1203;
+  color: var(--c-on-accent);
 }
 .tile-absent {
   background: var(--tile-absent);
   border-color: var(--tile-absent);
-  color: #e2e8f0;
+  color: var(--tile-absent-fg);
+}
+/* Keyboard: keys still in play are pastel; letters ruled out go dark/slate, so the two read
+ * completely differently in both themes. The ruled-out key keeps a readable letter. */
+.key-unused {
+  background: var(--key-bg);
+  border-color: var(--key-border);
+  color: var(--c-on-accent);
+}
+.key-absent {
+  background: var(--key-absent-bg);
+  border-color: color-mix(in srgb, var(--color-line) 55%, transparent);
+  color: var(--key-absent-fg);
+}
+
+/* Glows (shared so every glow follows the active palette) */
+.glow-correct {
+  box-shadow: 0 0 18px color-mix(in srgb, var(--color-correct) 55%, transparent);
+}
+.glow-steal-sm {
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-steal) 85%, transparent);
+}
+.drop-glow-shield {
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--color-shield) 75%, transparent));
+}
+.drop-glow-royal {
+  filter: drop-shadow(0 0 40px color-mix(in srgb, var(--color-royal) 70%, transparent));
+}
+.drop-glow-correct {
+  filter: drop-shadow(0 0 40px color-mix(in srgb, var(--color-correct) 70%, transparent));
 }
 
 /* Flip reveal (UI-10): 250 ms per tile, 100 ms stagger via --delay. The resting style is the FINAL
@@ -139,13 +350,13 @@ body {
   0% {
     transform: rotateX(0deg);
     background: var(--tile-empty);
-    border-color: #5b6b94;
+    border-color: var(--color-comment);
     color: var(--color-ink);
   }
   49.99% {
     transform: rotateX(90deg);
     background: var(--tile-empty);
-    border-color: #5b6b94;
+    border-color: var(--color-comment);
     color: var(--color-ink);
   }
   50% {
@@ -206,42 +417,29 @@ body {
   }
 }
 
-/* UI-7 invulnerable board: gold glow + shimmer */
+/* UI-7 invulnerable board: gold ring + glow */
 .shield-glow {
   box-shadow:
-    0 0 0 2px rgb(251 191 36 / 0.7),
-    0 0 28px rgb(251 191 36 / 0.35);
-}
-.shield-shimmer {
-  background: linear-gradient(110deg, transparent 30%, rgb(251 191 36 / 0.22) 50%, transparent 70%);
-  background-size: 250% 100%;
-  animation: shimmer 2.4s linear infinite;
-}
-@keyframes shimmer {
-  from {
-    background-position: 150% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
+    0 0 0 2px color-mix(in srgb, var(--color-shield-ink) 70%, transparent),
+    0 0 26px color-mix(in srgb, var(--color-shield) 45%, transparent);
 }
 
 /* FR-4.1 steal target crosshair glow */
 .steal-glow {
   box-shadow:
-    0 0 0 2px rgb(244 63 94 / 0.85),
-    0 0 32px rgb(244 63 94 / 0.4);
+    0 0 0 2px color-mix(in srgb, var(--color-steal-ink) 90%, transparent),
+    0 0 30px color-mix(in srgb, var(--color-steal) 45%, transparent);
 }
 
 /* UI-8 eliminated board */
 .eliminated {
-  filter: grayscale(1) brightness(0.7);
+  filter: var(--elim-filter);
 }
 .cracked {
   background-image:
-    linear-gradient(115deg, transparent 47%, rgb(255 255 255 / 0.22) 48%, transparent 49.5%),
-    linear-gradient(60deg, transparent 58%, rgb(255 255 255 / 0.16) 59%, transparent 60.5%),
-    linear-gradient(160deg, transparent 30%, rgb(255 255 255 / 0.14) 31%, transparent 32.5%);
+    linear-gradient(115deg, transparent 47%, var(--crack) 48%, transparent 49.5%),
+    linear-gradient(60deg, transparent 58%, var(--crack) 59%, transparent 60.5%),
+    linear-gradient(160deg, transparent 30%, var(--crack) 31%, transparent 32.5%);
 }
 
 .timer-pulse {
@@ -262,10 +460,10 @@ body {
 }
 @keyframes attack-flash {
   0% {
-    box-shadow: inset 0 0 0 999px rgb(244 63 94 / 0.35);
+    box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--color-steal) 35%, transparent);
   }
   100% {
-    box-shadow: inset 0 0 0 999px rgb(244 63 94 / 0);
+    box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--color-steal) 0%, transparent);
   }
 }
 
@@ -284,7 +482,6 @@ body {
     transition-duration: 1ms !important;
   }
   .tile-flip,
-  .shield-shimmer,
   .timer-pulse,
   .pending-pulse {
     animation: none !important;
